@@ -108,6 +108,14 @@ func settingsSchema() []SettingsSectionSchema {
 			},
 		},
 		{
+			ID:          "daemon",
+			Label:       "Daemon",
+			Description: "Daemon control plane settings",
+			Fields: []SettingsFieldSchema{
+				{Path: "daemon.control_port", Label: "Control Port", Type: "number", Section: "daemon", RestartRequired: true},
+			},
+		},
+		{
 			ID:          "mcp",
 			Label:       "MCP",
 			Description: "MCP server registry",
