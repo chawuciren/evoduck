@@ -1,0 +1,146 @@
+/* ===== Connection Page ===== */
+.connection-logo .brand-pixel {
+    display: inline-block;
+    letter-spacing: 0.2em;
+}
+
+.connection-page {
+    width: 100vw;
+    height: 100vh;
+    background: linear-gradient(180deg, rgba(5, 8, 22, 1) 0%, rgba(9, 17, 31, 1) 100%);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 1000;
+}
+
+.connection-page.hidden {
+    display: none;
+}
+
+.connection-box {
+    width: 500px;
+    background: linear-gradient(180deg, rgba(8, 14, 24, 0.98) 0%, rgba(5, 8, 22, 0.96) 100%);
+    border: 1px solid rgba(86, 247, 177, 0.18);
+    border-radius: 14px;
+    padding: 50px 60px;
+    box-shadow: 10px 10px 0 rgba(3, 8, 15, 0.95), 0 0 40px rgba(86, 247, 177, 0.08);
+    backdrop-filter: blur(20px);
+    position: relative;
+}
+
+.connection-logo {
+    text-align: center;
+    margin-bottom: 40px;
+}
+
+.connection-logo h1 {
+    font-size: 46px;
+    font-weight: 800;
+    color: var(--accent);
+    letter-spacing: 0.22em;
+    text-shadow: 0 0 26px rgba(86, 247, 177, 0.18);
+    margin-bottom: 12px;
+}
+
+.connection-logo p {
+    font-size: 14px;
+    color: var(--text-soft);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+}
+
+.connection-form-new {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.connection-form-new label {
+    font-size: 13px;
+    color: var(--text-main);
+    letter-spacing: 0.1em;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.connection-form-new input {
+    width: 100%;
+    padding: 14px 16px;
+    background: rgba(8, 14, 24, 0.96);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    font-size: 15px;
+    color: var(--text-main);
+    outline: none;
+    transition: all 0.2s;
+    backdrop-filter: blur(10px);
+}
+
+.connection-form-new input:focus {
+    border-color: var(--line-strong);
+    background: rgba(10, 18, 31, 0.98);
+    box-shadow: 0 0 0 1px rgba(86, 247, 177, 0.18), 0 0 20px rgba(86, 247, 177, 0.08);
+}
+
+.connection-form-new input::placeholder {
+    color: var(--text-dim);
+}
+
+.connection-form-new button {
+    width: 100%;
+    padding: 15px 22px;
+    background: linear-gradient(180deg, rgba(13, 37, 34, 1) 0%, rgba(7, 20, 25, 1) 100%);
+    color: var(--accent);
+    border: 1px solid rgba(86, 247, 177, 0.35);
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 4px 4px 0 rgba(3, 8, 15, 0.9);
+    transition: all 0.2s;
+    letter-spacing: 0.14em;
+    margin-top: 10px;
+    text-transform: uppercase;
+}
+
+.connection-form-new button:hover {
+    transform: translate(-1px, -1px);
+    box-shadow: 6px 6px 0 rgba(3, 8, 15, 0.95), 0 0 24px rgba(86, 247, 177, 0.12);
+}
+
+.connection-form-new button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.connection-error {
+    color: #ffc1cf;
+    font-size: 13px;
+    text-align: center;
+    margin-top: 20px;
+    display: none;
+}
+
+.connection-error.show {
+    display: block;
+}
+
+.reconnect-status {
+    color: var(--accent-2);
+    font-size: 13px;
+    text-align: center;
+    margin-top: 15px;
+    display: none;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.reconnect-status.show {
+    display: block;
+}

@@ -1,0 +1,113 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.goos }} ${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: windows
+            goarch: amd64
+            ext: .exe
+            archive: zip
+          - goos: windows
+            goarch: arm64
+            ext: .exe
+            archive: zip
+          - goos: linux
+            goarch: amd64
+            ext: ""
+            archive: tar.gz
+          - goos: linux
+            goarch: arm64
+            ext: ""
+            archive: tar.gz
+          - goos: darwin
+            goarch: amd64
+            ext: ""
+            archive: tar.gz
+          - goos: darwin
+            goarch: arm64
+            ext: ""
+            archive: tar.gz
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          mkdir -p dist/stage
+          VERSION="${GITHUB_REF_NAME}"
+          BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          go build \
+            -ldflags "-s -w -X main.Version=${VERSION} -X main.Commit=${GITHUB_SHA} -X main.BuildTime=${BUILD_TIME}" \
+            -o "dist/stage/evoduck${{ matrix.ext }}" \
+            ./cmd/evoduck
+
+      - name: Verify version metadata
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        run: |
+          ./dist/stage/evoduck version | tee dist/stage/version.txt
+          grep -q "evoduck ${GITHUB_REF_NAME}" dist/stage/version.txt
+          grep -q "commit: ${GITHUB_SHA}" dist/stage/version.txt
+
+      - name: Package zip
+        if: matrix.archive == 'zip'
+        run: |
+          cd dist/stage
+          zip "../evoduck-${{ matrix.goos }}-${{ matrix.goarch }}.zip" "evoduck${{ matrix.ext }}"
+
+      - name: Package tar.gz
+        if: matrix.archive == 'tar.gz'
+        run: |
+          cd dist/stage
+          tar -czf "../evoduck-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" evoduck
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: evoduck-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/evoduck-${{ matrix.goos }}-${{ matrix.goarch }}.*
+
+  release:
+    name: Publish Release
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum evoduck-* > checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/evoduck-*
+            dist/checksums.txt

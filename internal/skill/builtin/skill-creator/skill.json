@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "1.0",
+  "name": "skill-creator",
+  "version": "1.0.0",
+  "description": "Guide for creating, updating, validating, and packaging EvoDuck skills.",
+  "license": "MIT",
+  "compatibility": ["evoduck"],
+  "entry": "SKILL.md",
+  "files": ["SKILL.md", "skill.json"]
+}

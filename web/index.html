@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EvoDuck WebChat</title>
+    <link rel="stylesheet" href="css/style.css?v=20260425b">
+</head>
+<body>
+    <!-- Connection Page (shown before connecting) -->
+    <div class="connection-page" id="connectionPage">
+        <div class="connection-box">
+            <div class="connection-logo">
+                <h1 class="brand-pixel">EVODUCK</h1>
+                <p>AI Agent Platform</p>
+            </div>
+            <div class="connection-form-new">
+                <label>WebSocket URL</label>
+                <input type="text" id="wsUrlInput" placeholder="wss://your-domain/ws">
+                <label>User ID <span style="color: rgba(148, 163, 184, 0.45); font-size: 12px; font-weight: 400;">(Admin Access)</span></label>
+                <input type="text" id="userIdInput" placeholder="admin" value="admin" style="opacity: 0.6; cursor: not-allowed;">
+                <label>Gateway Token</label>
+                <input type="password" id="gatewayTokenInput" placeholder="Enter gateway token if enabled" autocomplete="current-password">
+                <button onclick="connect()" id="connectBtn">Connect</button>
+                <div class="connection-error" id="connectionError"></div>
+                <div class="reconnect-status" id="reconnectStatus"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- App Container (shown after connecting) -->
+    <div class="app-container" id="appContainer">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <div class="sidebar-logo brand-pixel">EVODUCK</div>
+                <div class="sidebar-subtitle">AI Agent Platform</div>
+            </div>
+            <div class="sidebar-nav">
+                <div class="nav-section">
+                    <div class="nav-section-title">Main</div>
+                    <div class="nav-item active" data-page="chat">
+                        <span class="nav-icon">💬</span><span class="nav-label-group"><span class="nav-label">Chat</span><span class="nav-meta">live terminal</span></span>
+                    </div>
+                    <div class="nav-item" data-page="agents">
+                        <span class="nav-icon">🤖</span><span class="nav-label-group"><span class="nav-label">Agents</span><span class="nav-meta">runtime pool</span></span>
+                    </div>
+                </div>
+                <div class="nav-section">
+                    <div class="nav-section-title">Management</div>
+                    <div class="nav-item" data-page="memory">
+                        <span class="nav-icon">🧠</span><span class="nav-label-group"><span class="nav-label">Memory</span><span class="nav-meta">agent and user memory</span></span>
+                    </div>
+                    <div class="nav-item" data-page="knowledge">
+                        <span class="nav-icon">📚</span><span class="nav-label-group"><span class="nav-label">Knowledge</span><span class="nav-meta">shared notes</span></span>
+                    </div>
+                    <div class="nav-item" data-page="sessions">
+                        <span class="nav-icon">📝</span><span class="nav-label-group"><span class="nav-label">Sessions</span><span class="nav-meta">history log</span></span>
+                    </div>
+                    <div class="nav-item" data-page="skills">
+                        <span class="nav-icon">🔧</span><span class="nav-label-group"><span class="nav-label">Skills</span><span class="nav-meta">loaded modules</span></span>
+                    </div>
+                    <div class="nav-item" data-page="schedules">
+                        <span class="nav-icon">⏰</span><span class="nav-label-group"><span class="nav-label">Schedules</span><span class="nav-meta">task automation</span></span>
+                    </div>
+                </div>
+                <div class="nav-section">
+                    <div class="nav-section-title">System</div>
+                    <div class="nav-item" data-page="diagnostics">
+                        <span class="nav-icon">🛰️</span><span class="nav-label-group"><span class="nav-label">Diagnostics</span><span class="nav-meta">capability audit</span></span>
+                    </div>
+                    <div class="nav-item" data-page="settings">
+                        <span class="nav-icon">⚙️</span><span class="nav-label-group"><span class="nav-label">Settings</span><span class="nav-meta">runtime config</span></span>
+                    </div>
+                    <div class="nav-item" data-page="logs">
+                        <span class="nav-icon">📋</span><span class="nav-label-group"><span class="nav-label">Logs</span><span class="nav-meta">event stream</span></span>
+                    </div>
+                </div>
+            </div>
+            <div class="sidebar-footer">
+                <div class="sidebar-footer-text">Version 1.0.0</div>
+            </div>
+        </div>
+
+        <!-- Right Panel -->
+        <div class="right-panel" id="rightPanel">
+            <div class="right-panel-section">
+                <div class="right-panel-title"><span class="icon">📋</span> Tasks</div>
+                <div class="rp-task-list" id="rpTaskList">
+                    <div class="rp-empty-state" id="rpEmptyState">No active tasks</div>
+                </div>
+            </div>
+            <div class="right-panel-section">
+                <div class="right-panel-title"><span class="icon">ℹ️</span> Context</div>
+                <div id="rpContextInfo" style="font-size:13px; color:rgba(148,163,184,0.45);">—</div>
+                <div class="context-stats" id="contextStats" style="display:none;">
+                    <div class="context-stats-header">
+                        <span class="token-usage" id="tokenUsage">— / —</span>
+                        <span class="usage-percent" id="usagePercent">—%</span>
+                    </div>
+                    <div class="context-bar">
+                        <div class="context-bar-fill" id="contextBarFill"></div>
+                    </div>
+                    <div class="context-stats-detail" id="contextStatsDetail"></div>
+                    <button class="compress-btn" onclick="compressContext()" title="Compress context">Compress</button>
+                </div>
+            </div>
+            <div class="right-panel-section">
+                <div class="right-panel-title"><span class="icon">⚡</span> Runtime</div>
+                <div class="rp-summary-list" id="rpRuntimeSummary">
+                    <div class="rp-empty-state">Waiting for diagnostics</div>
+                </div>
+            </div>
+            <div class="right-panel-section">
+                <div class="right-panel-title"><span class="icon">🖥️</span> System</div>
+                <div class="rp-summary-list" id="rpSystemSummary">
+                    <div class="rp-empty-state">Waiting for diagnostics</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Chat Page -->
+            <div class="page-container active" id="page-chat">
+                <div class="page-header terminal-header">
+                    <h1 class="brand-pixel">EvoDuck WebChat</h1>
+                    <div class="page-header-actions">
+                        <button id="backToMainChatBtn" class="action-btn" type="button" onclick="returnToMainChat()" style="display:none;">Back to Main Chat</button>
+                        <select id="agentSelect" class="agent-selector" onchange="onAgentChange()">
+                            <option value="">Default Agent</option>
+                        </select>
+                        <span class="status disconnected" id="status">Disconnected</span>
+                    </div>
+                </div>
+                <div class="chat-messages" id="chatMessages"></div>
+                <button class="chat-scroll-bottom-btn" id="chatScrollBottomBtn" type="button" onclick="scrollChatToBottom('smooth')" aria-label="Scroll to latest messages" title="Back to bottom">Newest</button>
+                <div class="typing-indicator" id="typingIndicator">Assistant is typing...</div>
+                <div class="chat-input">
+                    <div id="pendingMediaTray" class="pending-media-tray" style="display:none;"></div>
+                    <div class="chat-input-row">
+                        <button id="cmdBtn" class="terminal-icon-btn" onclick="toggleCommandDropdown()" title="Commands">/</button>
+                        <button id="mediaUploadBtn" class="terminal-icon-btn" type="button" onclick="openMediaPicker()" title="Upload image">+</button>
+                        <div class="chat-input-shell">
+                            <input type="file" id="mediaFileInput" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
+                            <input type="text" id="messageInput" placeholder="Type a message... (use / for commands)" onkeypress="handleKeyPress(event)" oninput="handleInputChange(event)" onkeydown="handleInputKeydown(event)" autocomplete="off">
+                            <div id="commandDropdown" class="command-dropdown" style="display: none;"></div>
+                        </div>
+                        <button id="sendBtn" onclick="sendMessage()" disabled>Send</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Agents Page -->
+            <div class="page-container" id="page-agents">
+                <div class="page-header">
+                    <h1>Agents</h1>
+                    <div class="page-header-actions">
+                        <span class="header-chip">registry</span>
+                        <button class="action-btn" onclick="refreshAgents()">Refresh</button>
+                    </div>
+                </div>
+                <div class="page-content">
+                    <div class="agents-grid" id="agentsList"></div>
+                </div>
+            </div>
+
+            <!-- Memory Page -->
+            <div class="page-container" id="page-memory">
+                <div class="page-header">
+                    <h1>Memory</h1>
+                    <div class="page-header-actions">
+                        <span class="header-chip">memory layers</span>
+                        <div class="search-bar">
+                            <input type="text" placeholder="Search agent, user, or medium memory..." id="memorySearch">
+                            <button onclick="searchMemory()">Search</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="page-content">
+                    <div class="knowledge-list" id="memoryList"></div>
+                </div>
+            </div>
+
+            <!-- Knowledge Page -->
+            <div class="page-container" id="page-knowledge">
+                <div class="page-header">
+                    <h1>Knowledge</h1>
+                    <div class="page-header-actions">
+                        <span class="header-chip">shared notes</span>
+                        <button class="action-btn" onclick="refreshKnowledge()">Refresh</button>
+                        <div class="search-bar">
+                            <input type="text" placeholder="Search shared knowledge by title, path, or tag..." id="knowledgeSearch">
+                            <button onclick="searchKnowledge()">Search</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="page-content">
+                    <div class="knowledge-workspace">
+                        <div class="knowledge-browser-panel">
+                            <div class="settings-section knowledge-browser-shell">
+                                <div class="settings-section-title">Knowledge Browser</div>
+                                 <div class="knowledge-toolbar">
+                                      <input class="settings-input knowledge-toolbar-input" id="knowledgeDirectoryInput" placeholder="new/folder/path">
+                                      <button class="action-btn" onclick="createKnowledgeDirectory()">Create Folder</button>
+                                      <button class="action-btn" onclick="deleteKnowledgeDirectory()">Delete Folder</button>
+                                 </div>
+                                 <div class="knowledge-directory-context" id="knowledgeDirectoryContext">Creating folders at: root</div>
+                                 <div class="knowledge-filters">
+                                    <div class="knowledge-filter-block">
+                                        <div class="knowledge-filter-label">Directories</div>
+                                        <div class="knowledge-tree" id="knowledgeTree"></div>
+                                    </div>
+                                    <div class="knowledge-filter-block">
+                                        <div class="knowledge-filter-label">Tags</div>
+                                        <div class="knowledge-tags" id="knowledgeTagFilters"></div>
+                                    </div>
+                                </div>
+                                <div class="knowledge-list" id="knowledgeList"></div>
+                            </div>
+                        </div>
+                        <div class="knowledge-editor-panel">
+                            <div class="settings-section knowledge-editor-shell">
+                                <div class="settings-section-title">Knowledge Editor</div>
+                                <div class="knowledge-current-path" id="knowledgeCurrentPath">Path: new entry</div>
+                                <input type="hidden" id="knowledgeOriginalPathInput">
+                                <div class="settings-row"><span class="settings-label">Path</span><input class="settings-input" id="knowledgePathInput" placeholder="product/roadmap"></div>
+                                <div class="settings-row"><span class="settings-label">Title</span><input class="settings-input" id="knowledgeTitleInput" placeholder="Product Roadmap"></div>
+                                <div class="settings-row"><span class="settings-label">Tags</span><input class="settings-input" id="knowledgeTagsInput" placeholder="product, roadmap, onboarding"></div>
+                                <div class="knowledge-editor-layout">
+                                    <div class="knowledge-editor-form">
+                                        <div class="settings-row schedule-row-block"><span class="settings-label">Content</span><textarea class="settings-input knowledge-editor-textarea" id="knowledgeContentInput" placeholder="# Notes&#10;&#10;Write markdown here..." oninput="renderKnowledgePreview()"></textarea></div>
+                                    </div>
+                                    <div class="knowledge-preview-shell">
+                                        <div class="knowledge-preview-title">Preview</div>
+                                        <div class="knowledge-preview-content" id="knowledgePreviewContent"></div>
+                                    </div>
+                                </div>
+                                <div class="knowledge-editor-actions">
+                                    <button class="action-btn" onclick="saveKnowledgeEntry()">Save Entry</button>
+                                    <button class="action-btn" onclick="moveKnowledgeEntry()">Move / Rename</button>
+                                    <button class="action-btn" onclick="resetKnowledgeEditor()">New Entry</button>
+                                    <button class="action-btn" onclick="deleteKnowledgeEntry()">Delete Entry</button>
+                                </div>
+                                <div class="knowledge-editor-hint" id="knowledgeEditorHint">Shared knowledge is stored under <code>.evoduck/knowledge</code> and is available to all agents.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sessions Page -->
+            <div class="page-container" id="page-sessions">
+                <div class="page-header">
+                    <h1>Sessions</h1>
+                    <div class="page-header-actions">
+                        <span class="header-chip">conversation log</span>
+                        <button class="action-btn" onclick="refreshSessions()">Refresh</button>
+                    </div>
+                </div>
+                <div class="page-content">
+                    <div class="sessions-list" id="sessionsList"></div>
+                </div>
+            </div>
+
+            <!-- Skills Page -->
+            <div class="page-container" id="page-skills">
+                <div class="page-header">
+                    <h1>Skills</h1>
+                    <div class="page-header-actions">
+                        <span class="header-chip">module deck</span>
+                        <button class="action-btn" onclick="refreshSkills()">Refresh</button>
+                    </div>
+                </div>
+                <div class="page-content">
+                    <div class="skills-layout">
+                        <div class="skills-list-panel">
+                            <div class="skills-grid" id="skillsList"></div>
+                        </div>
+                        <div class="skill-preview-panel" id="skillPreviewPanel"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Schedules Page -->
+            <div class="page-container" id="page-schedules">
+                <div class="page-header">
+                    <h1>Schedules</h1>
+                    <div class="page-header-actions">
+                        <span class="header-chip">user automation</span>
+                        <button class="action-btn" onclick="refreshSchedules()">Refresh</button>
+                    </div>
+                </div>
+                <div class="page-content">
+                    <div class="schedule-layout">
+                        <div class="settings-section schedule-form-panel">
+                            <div class="settings-section-title">Create Schedule</div>
+                            <div class="settings-row"><span class="settings-label">Name</span><input class="settings-input" id="scheduleName" placeholder="Daily summary"></div>
+                            <div class="settings-row"><span class="settings-label">Cron</span><input class="settings-input" id="scheduleCron" placeholder="0 9 * * *"></div>
+                            <div class="schedule-helper-row">
+                                <div class="schedule-helper-text">Standard 5-field cron. Example: `0 9 * * *` runs every day at 09:00.</div>
+                                <div class="schedule-preset-list">
+                                    <button type="button" class="session-btn settings-inline-btn" onclick="applySchedulePreset('0 9 * * *')">Daily 09:00</button>
+                                    <button type="button" class="session-btn settings-inline-btn" onclick="applySchedulePreset('0 * * * *')">Hourly</button>
+                                    <button type="button" class="session-btn settings-inline-btn" onclick="applySchedulePreset('0 9 * * 1')">Weekly Mon</button>
+                                </div>
+                            </div>
+                            <div class="settings-row"><span class="settings-label">Description</span><input class="settings-input" id="scheduleDescription" placeholder="Optional description"></div>
+                            <div class="settings-row schedule-row-block"><span class="settings-label">Prompt</span><textarea class="settings-input schedule-textarea" id="schedulePrompt" placeholder="What should the agent do when this schedule runs?"></textarea></div>
+                            <div class="settings-row schedule-checkbox-row"><span class="settings-label">Enabled</span><label class="schedule-checkbox-label"><input type="checkbox" id="scheduleEnabled" checked> start immediately</label></div>
+                            <div class="schedule-form-actions">
+                                <button class="action-btn" onclick="createScheduledTask()">Create Task</button>
+                            </div>
+                        </div>
+                        <div class="schedule-list-panel">
+                            <div class="settings-section">
+                                <div class="settings-section-title">Schedules</div>
+                                <div class="sessions-list" id="schedulesList"></div>
+                            </div>
+                            <div class="settings-section schedule-runs-panel">
+                                <div class="settings-section-title">Recent Runs</div>
+                                <div class="schedule-runs-header" id="scheduleRunsHeader">Select a schedule to inspect recent runs.</div>
+                                <div class="schedule-runs-list" id="scheduleRunsList"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Diagnostics Page -->
+            <div class="page-container" id="page-diagnostics">
+                <div class="page-header">
+                    <h1>Diagnostics</h1>
+                    <div class="page-header-actions">
+                        <span class="header-chip">capability audit</span>
+                        <button class="action-btn" onclick="refreshDiagnostics()">Refresh</button>
+                    </div>
+                </div>
+                <div class="page-content">
+                    <div class="diagnostics-toolbar">
+                        <div class="diagnostics-status-pill" id="diagnosticsStatusPill">Loading…</div>
+                        <div class="diagnostics-status-text" id="diagnosticsStatusText">Waiting for runtime diagnostics</div>
+                    </div>
+                    <div class="diagnostics-grid" id="diagnosticsOverviewGrid"></div>
+                    <div class="diagnostics-layout">
+                        <div class="diagnostics-main-column" id="diagnosticsMainColumn"></div>
+                        <div class="diagnostics-side-column" id="diagnosticsSideColumn"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Settings Page -->
+            <div class="page-container" id="page-settings">
+                <div class="page-header">
+                    <h1>Settings</h1>
+                    <div class="page-header-actions">
+                        <span class="header-chip">control plane</span>
+                        <button class="action-btn" onclick="reloadSettingsFromDisk()">Reload from Disk</button>
+                        <button class="action-btn" onclick="validateSettingsDraft()">Validate</button>
+                        <button class="action-btn" onclick="saveSettingsDraft()">Save & Apply</button>
+                    </div>
+                </div>
+                <div class="page-content">
+                    <div class="settings-toolbar">
+                        <div class="settings-meta" id="settingsMeta">Config path: —</div>
+                        <div class="settings-status" id="settingsStatus">Loading settings…</div>
+                    </div>
+                    <div class="settings-panel" id="settingsPanel"></div>
+                </div>
+            </div>
+
+            <!-- Logs Page -->
+            <div class="page-container" id="page-logs">
+                <div class="page-header">
+                    <h1>Logs</h1>
+                    <div class="page-header-actions">
+                        <span class="header-chip">event stream</span>
+                        <div class="log-controls">
+                            <label class="log-filter" for="logLevel">
+                                <span class="log-filter-label">Level</span>
+                                <select id="logLevel" class="log-level-select">
+                                    <option value="all">All Levels</option>
+                                    <option value="info">Info</option>
+                                    <option value="warn">Warning</option>
+                                    <option value="error">Error</option>
+                                </select>
+                            </label>
+                            <button onclick="refreshLogs()">Refresh</button>
+                            <button onclick="clearLogs()">Clear</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="page-content">
+                    <div class="log-container" id="logsList"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript Files (load order matters) -->
+    <script src="js/utils.js?v=20260425b"></script>
+    <script src="js/router.js?v=20260425b"></script>
+    <script src="js/agents-page.js?v=20260425b"></script>
+    <script src="js/chat-page.js?v=20260425b"></script>
+    <script src="js/context-panel.js?v=20260425b"></script>
+    <script src="js/skills-page.js?v=20260425b"></script>
+    <script src="js/sessions-page.js?v=20260425b"></script>
+    <script src="js/schedules-page.js?v=20260425b"></script>
+    <script src="js/knowledge-page.js?v=20260425b"></script>
+    <script src="js/diagnostics-page.js?v=20260425b"></script>
+    <script src="js/settings-page.js?v=20260425b"></script>
+    <script src="js/logs-page.js?v=20260425b"></script>
+    <script src="js/chat.js?v=20260425b"></script>
+    <script src="js/commands.js?v=20260425b"></script>
+    <script src="js/app.js?v=20260425b"></script>
+</body>
+</html>

@@ -1,0 +1,126 @@
+gateway:
+  host: 127.0.0.1
+  port: 18789
+  token: ""
+
+default_agent: admin-bot
+data_dir: ./data
+
+llm:
+  default_provider: ollama
+  default_model: qwen2.5
+  providers:
+    ollama:
+      type: ollama
+      base_url: http://localhost:11434/v1
+      default_model: qwen2.5
+      models:
+        - id: qwen2.5
+          name: qwen2.5
+          type: chat
+          capabilities:
+            vision: true
+            reasoning: true
+            tool_use: true
+          context_window: 128000
+          max_output_tokens: 8192
+
+agents:
+  admin-bot:
+    workspace: ./agents/admin-bot
+    role: admin
+    provider: ollama
+    model: qwen2.5
+    user_isolation:
+      auto_create: true
+      auto_profile: true
+
+channels:
+  webchat:
+    type: webchat
+    agent: admin-bot
+    role: admin
+    token: ""
+
+plugins:
+  ws_server:
+    host: 127.0.0.1
+    port: 19000
+
+  plugins:
+    echo-tool:
+      enabled: true
+      type: local
+      command: ["go", "run", "./plugins/echo-tool"]
+      restart: never
+      capabilities:
+        allow: ["tool"]
+
+shared:
+  skills_dir: ./data/skills
+
+tools:
+  backend_call:
+    endpoints: {}
+
+memory:
+  short_term:
+    max_messages: 200
+    max_tokens: 128000
+    keep_recent: 10
+    session_ttl: 168h
+    cleanup_interval: 1h
+    flush_before_compact: false
+  medium_term:
+    dir: memory
+    max_size: 5000
+    load_days: 7
+    min_messages_to_extract: 5
+    compression_threshold: 10000
+  long_term:
+    compression_threshold: 15000
+    dedup_threshold: 0.95
+    vector:
+      enabled: false
+      prefetch_limit: 5
+      score_threshold: 0.7
+      embedder:
+        type: ollama
+        model: nomic-embed-text
+        dimensions: 768
+    cleanup_policy:
+      check_interval: 24h
+      min_age_days: 30
+      batch_size: 30
+      reference:
+        medium_memory_days: 7
+        include_core_memory: true
+        include_access_stats: true
+  core_memory:
+    file: MEMORY.md
+    auto_consolidate: true
+    importance_threshold: 0.9
+  bootstrap:
+    max_file_chars: 20000
+    max_total_chars: 150000
+    warning_threshold: 0.8
+    truncation_strategy: head
+heartbeat:
+  enabled: false
+  interval: 30m
+  prompt: "Check if anything needs attention."
+
+scheduler:
+  system_tasks:
+    memory_curation:
+      schedule: "0 * * * *"
+    experience_curation:
+      schedule: "0 3 * * *"
+
+mcp:
+  servers: {}
+
+logging:
+  level: info
+  json_mode: false
+  color: true

@@ -1,0 +1,57 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/evoduck
+
+# Test files
+test*
+
+# Logs
+*.log
+server.log
+
+# Data directory (runtime data)
+data/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node
+node_modules/
+package-lock.json
+
+# Environment
+.env
+.env.local
+
+# Config files
+configs/config.yaml
+configs/*.yaml
+
+# Claude Code worktrees (临时工作树)
+.claude/
+
+# Kilo agent tool
+.kilo/
+
+# OpenCode tool
+.opencode/
+
+# Playwright MCP logs
+.playwright-mcp/
+
+# Bun lock file
+bun.lock
+
+# Build output
+build/
