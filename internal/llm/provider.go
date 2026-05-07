@@ -38,3 +38,22 @@ type Provider interface {
 	FetchModels(ctx context.Context) ([]ProviderModel, error)
 	ListModels(ctx context.Context) ([]ProviderModel, error)
 }
+
+type deferredToolImageReplayProvider interface {
+	RequiresDeferredToolImageReplay() bool
+}
+
+func RequiresDeferredToolImageReplay(provider Provider) bool {
+	if provider == nil {
+		return false
+	}
+	if deferred, ok := provider.(deferredToolImageReplayProvider); ok {
+		return deferred.RequiresDeferredToolImageReplay()
+	}
+	switch provider.(type) {
+	case *OpenAIProvider, *OpenAICompatibleProvider:
+		return true
+	default:
+		return false
+	}
+}

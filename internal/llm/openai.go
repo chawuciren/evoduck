@@ -66,6 +66,8 @@ func NewOpenAIProvider(name string, cfg config.ProviderConfig, decider *proxy.De
 
 func (p *OpenAIProvider) Name() string { return p.name }
 
+func (p *OpenAIProvider) RequiresDeferredToolImageReplay() bool { return true }
+
 func (p *OpenAIProvider) resolveModel(opts ChatOptions) string {
 	if opts.Model != "" {
 		return opts.Model

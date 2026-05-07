@@ -9,15 +9,17 @@ import (
 )
 
 type Session struct {
-	mu             sync.RWMutex
-	Key            string // Session Key: "channel:user_id"
-	ID             string // Session ID (unique identifier)
-	UserID         string // User ID extracted from Key for memory isolation
-	Metadata       map[string]string
-	msgs           []models.Message
-	UpdatedAt      time.Time
-	store          *JSONLStore
-	inToolExecution bool // Tracks whether runtime is processing tool calls
+	mu                  sync.RWMutex
+	Key                 string // Session Key: "channel:user_id"
+	ID                  string // Session ID (unique identifier)
+	UserID              string // User ID extracted from Key for memory isolation
+	Metadata            map[string]string
+	msgs                []models.Message
+	UpdatedAt           time.Time
+	store               *JSONLStore
+	inToolExecution     bool // Tracks whether runtime is processing tool calls
+	pendingToolReplay   *models.Message
+	pendingReplayActive bool
 }
 
 func NewSession(key, id string, store *JSONLStore) *Session {
@@ -221,4 +223,40 @@ func (s *Session) IsInToolExecution() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.inToolExecution
+}
+
+func (s *Session) SetPendingToolReplay(msg *models.Message) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if msg == nil {
+		s.pendingToolReplay = nil
+		s.pendingReplayActive = false
+		return
+	}
+	clone := *msg
+	clone.Media = append([]models.OutgoingMedia(nil), msg.Media...)
+	clone.ToolCalls = append([]models.ToolCall(nil), msg.ToolCalls...)
+	clone.ReasoningMetadata = models.CloneReasoningReplay(msg.ReasoningMetadata)
+	s.pendingToolReplay = &clone
+	s.pendingReplayActive = true
+}
+
+func (s *Session) PendingToolReplay() *models.Message {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !s.pendingReplayActive || s.pendingToolReplay == nil {
+		return nil
+	}
+	clone := *s.pendingToolReplay
+	clone.Media = append([]models.OutgoingMedia(nil), s.pendingToolReplay.Media...)
+	clone.ToolCalls = append([]models.ToolCall(nil), s.pendingToolReplay.ToolCalls...)
+	clone.ReasoningMetadata = models.CloneReasoningReplay(s.pendingToolReplay.ReasoningMetadata)
+	return &clone
+}
+
+func (s *Session) ClearPendingToolReplay() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pendingToolReplay = nil
+	s.pendingReplayActive = false
 }

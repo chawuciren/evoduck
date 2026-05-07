@@ -146,7 +146,6 @@ type Runtime struct {
 	role              models.Role
 	userIsolation     bool // 是否启用用户隔离
 	mediaStore        *mediautil.Store
-
 }
 
 func NewRuntime(agentID, workspace string, llmProvider llm.Provider, toolRegistry *tools.Registry, promptBuilder *PromptBuilder, role models.Role, compactor *Compactor, userIsolation bool, pluginManager *plugin.Manager) *Runtime {
@@ -181,6 +180,20 @@ func (r *Runtime) ForceCompact(ctx context.Context, sess *session.Session) error
 		return fmt.Errorf("compactor unavailable")
 	}
 	return r.compactor.ForceCompact(ctx, sess)
+}
+
+func (r *Runtime) SetCompactionNotifier(notifier CompactionNotifier) {
+	if r.compactor == nil {
+		return
+	}
+	r.compactor.SetNotifier(notifier)
+}
+
+func (r *Runtime) compactIfNeeded(ctx context.Context, sess *session.Session) error {
+	if r.compactor == nil || isEphemeralSession(sess) {
+		return nil
+	}
+	return r.compactor.CompactIfNeeded(ctx, sess)
 }
 
 func buildTaskPlanFromArgs(args map[string]interface{}) (*models.TaskPlan, error) {
@@ -301,12 +314,16 @@ func (r *Runtime) appendToolResultMessage(sess *session.Session, tc models.ToolC
 	if err != nil {
 		return err
 	}
-	sess.Append(models.Message{
+	msg := models.Message{
 		Role:       "tool",
 		Content:    env.Content,
 		Media:      append([]models.OutgoingMedia(nil), env.Media...),
 		ToolCallID: tc.ID,
-	})
+	}
+	sess.Append(msg)
+	if llm.RequiresDeferredToolImageReplay(r.llmProvider) && len(env.Media) > 0 {
+		sess.SetPendingToolReplay(&msg)
+	}
 	return nil
 }
 
@@ -420,6 +437,9 @@ func (r *Runtime) RunWithMedia(ctx context.Context, sess *session.Session, userM
 		Content: userMessage,
 		Media:   append([]models.OutgoingMedia(nil), media...),
 	})
+	if err := r.compactIfNeeded(ctx, sess); err != nil {
+		return fmt.Errorf("compact before llm: %w", err)
+	}
 
 	messages, err := r.promptBuilder.Build(ctx, sess, userMessage)
 	if err != nil {
@@ -450,6 +470,9 @@ func (r *Runtime) RunWithMedia(ctx context.Context, sess *session.Session, userM
 	if err != nil {
 		return fmt.Errorf("LLM chat: %w", err)
 	}
+	if llm.RequiresDeferredToolImageReplay(r.llmProvider) {
+		sess.ClearPendingToolReplay()
+	}
 
 	maxIterations := 10
 	userID := runtimeUserID
@@ -472,6 +495,9 @@ func (r *Runtime) RunWithMedia(ctx context.Context, sess *session.Session, userM
 			if err := r.appendToolResultMessage(sess, tc, result); err != nil {
 				return fmt.Errorf("append tool result: %w", err)
 			}
+			if err := r.compactIfNeeded(ctx, sess); err != nil {
+				return fmt.Errorf("compact after tool result: %w", err)
+			}
 		}
 
 		messages, err = r.promptBuilder.Build(ctx, sess, userMessage)
@@ -490,6 +516,9 @@ func (r *Runtime) RunWithMedia(ctx context.Context, sess *session.Session, userM
 		if err != nil {
 			return fmt.Errorf("LLM chat after tool: %w", err)
 		}
+		if llm.RequiresDeferredToolImageReplay(r.llmProvider) {
+			sess.ClearPendingToolReplay()
+		}
 		r.triggerAfterLLMComplete(response, userID)
 	}
 
@@ -500,12 +529,6 @@ func (r *Runtime) RunWithMedia(ctx context.Context, sess *session.Session, userM
 			ThinkingContent:   response.ReasoningContent,
 			ReasoningMetadata: models.CloneReasoningReplay(response.ReasoningMetadata),
 		})
-	}
-
-	if r.compactor != nil && !isEphemeralSession(sess) {
-		if err := r.compactor.CompactIfNeeded(ctx, sess); err != nil {
-			rtLog.Warn("Context compaction failed", logger.Fields{"error": err.Error()})
-		}
 	}
 
 	return nil
@@ -535,21 +558,6 @@ func (r *Runtime) RunStreamWithLoopWithMedia(ctx context.Context, sess *session.
 
 	go func() {
 		defer close(outputCh)
-		// ⭐ CRITICAL: Use background context for compaction, not the stream context.
-		// The stream context (ctx) may be canceled by the gateway (cancel action, timeout, disconnect)
-		// before compaction completes, causing summary generation to fail.
-		if !isEphemeralSession(sess) {
-			go func() {
-				compactCtx, compactCancel := context.WithTimeout(context.Background(), 60*time.Second)
-				defer compactCancel()
-
-				if r.compactor != nil {
-					if err := r.compactor.CompactIfNeeded(compactCtx, sess); err != nil {
-						rtLog.Error("Compaction failed", logger.Fields{"error": err.Error()})
-					}
-				}
-			}()
-		}
 
 		// 1. 添加用户消息
 		sess.Append(models.Message{
@@ -557,6 +565,15 @@ func (r *Runtime) RunStreamWithLoopWithMedia(ctx context.Context, sess *session.
 			Content: userMessage,
 			Media:   append([]models.OutgoingMedia(nil), media...),
 		})
+		if err := r.compactIfNeeded(ctx, sess); err != nil {
+			outputCh <- models.StreamEvent{
+				Type:      "error",
+				Error:     fmt.Errorf("compact before llm: %w", err),
+				Iteration: 0,
+				Done:      true,
+			}
+			return
+		}
 		rtLog.Debug("User message added", logger.Fields{"message": truncateString(userMessage, 100)})
 
 		// 任务计划相关变量
@@ -669,6 +686,10 @@ func (r *Runtime) RunStreamWithLoopWithMedia(ctx context.Context, sess *session.
 					Done:      true,
 				}
 				return
+			}
+
+			if llm.RequiresDeferredToolImageReplay(r.llmProvider) {
+				sess.ClearPendingToolReplay()
 			}
 
 			// 4. 处理stream事件
@@ -874,12 +895,21 @@ func (r *Runtime) RunStreamWithLoopWithMedia(ctx context.Context, sess *session.
 
 				if err := r.appendToolResultMessage(sess, tc, result); err != nil {
 					outputCh <- models.StreamEvent{
-							Type:      "error",
-							Error:     fmt.Errorf("append tool result: %w", err),
-							Iteration: iteration,
-							Done:      true,
-						}
-						return
+						Type:      "error",
+						Error:     fmt.Errorf("append tool result: %w", err),
+						Iteration: iteration,
+						Done:      true,
+					}
+					return
+				}
+				if err := r.compactIfNeeded(ctx, sess); err != nil {
+					outputCh <- models.StreamEvent{
+						Type:      "error",
+						Error:     fmt.Errorf("compact after tool result: %w", err),
+						Iteration: iteration,
+						Done:      true,
+					}
+					return
 				}
 			}
 

@@ -2,7 +2,9 @@ package agent
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -22,10 +24,12 @@ type Compactor struct {
 	flushBeforeCompact bool         // 压缩前是否自动 flush
 	preCompactCurator  PreCompactCurator
 	summaryGenerator   SummaryGenerator
+	notifier           CompactionNotifier
 }
 
 type PreCompactCurator func(ctx context.Context, sess *session.Session, msgs []models.Message) (string, error)
 type SummaryGenerator func(ctx context.Context, sess *session.Session, msgs []models.Message, flushReport string) (string, error)
+type CompactionNotifier func(sess *session.Session, mode string)
 
 type compactionNeed struct {
 	Needed          bool
@@ -75,6 +79,10 @@ func (c *Compactor) SetSummaryGenerator(generator SummaryGenerator) {
 	c.summaryGenerator = generator
 }
 
+func (c *Compactor) SetNotifier(notifier CompactionNotifier) {
+	c.notifier = notifier
+}
+
 // ShouldCompact 判断是否需要压缩
 func (c *Compactor) ShouldCompact(sess *session.Session) bool {
 	return c.compactionNeed(sess).Needed
@@ -110,6 +118,7 @@ func estimateMessagesTokens(msgs []models.Message) int {
 	for _, m := range msgs {
 		// 计算内容 token：根据中英文比例动态估算
 		totalTokens += estimateTextTokens(m.Content)
+		totalTokens += estimateMessageMediaTokens(m.Media)
 		// 角色和元数据也占用 Token
 		totalTokens += 10 // role overhead
 		if len(m.ToolCalls) > 0 {
@@ -119,6 +128,50 @@ func estimateMessagesTokens(msgs []models.Message) int {
 		}
 	}
 	return totalTokens
+}
+
+func estimateMessageMediaTokens(media []models.OutgoingMedia) int {
+	total := 0
+	for _, item := range media {
+		bytes := mediaByteSize(item)
+		if bytes <= 0 {
+			continue
+		}
+		total += estimateImageTokensFromBytes(bytes)
+	}
+	return total
+}
+
+func mediaByteSize(media models.OutgoingMedia) int64 {
+	if media.FileSize > 0 {
+		return media.FileSize
+	}
+	if path := strings.TrimSpace(media.Path); path != "" {
+		if info, err := os.Stat(path); err == nil && info.Size() > 0 {
+			return info.Size()
+		}
+	}
+	if data := strings.TrimSpace(media.Data); data != "" {
+		decodedLen := base64.StdEncoding.DecodedLen(len(data))
+		if decodedLen > 0 {
+			return int64(decodedLen)
+		}
+	}
+	return 0
+}
+
+func estimateImageTokensFromBytes(size int64) int {
+	if size <= 0 {
+		return 0
+	}
+	tokens := int(size / 768)
+	if size%768 != 0 {
+		tokens++
+	}
+	if tokens < 32 {
+		return 32
+	}
+	return tokens
 }
 
 // estimateTextTokens 根据字符类型估算文本的 Token 数
@@ -154,7 +207,7 @@ func (c *Compactor) Compact(ctx context.Context, sess *session.Session) error {
 	if !c.ShouldCompact(sess) {
 		return nil
 	}
-	return c.compact(ctx, sess)
+	return c.compact(ctx, sess, "automatic")
 }
 
 // ForceCompact performs manual compaction even when thresholds are not exceeded.
@@ -162,10 +215,10 @@ func (c *Compactor) ForceCompact(ctx context.Context, sess *session.Session) err
 	if sess == nil {
 		return fmt.Errorf("session is required")
 	}
-	return c.compact(ctx, sess)
+	return c.compact(ctx, sess, "manual")
 }
 
-func (c *Compactor) compact(ctx context.Context, sess *session.Session) error {
+func (c *Compactor) compact(ctx context.Context, sess *session.Session, mode string) error {
 	if sess == nil {
 		return fmt.Errorf("session is required")
 	}
@@ -229,7 +282,11 @@ func (c *Compactor) compact(ctx context.Context, sess *session.Session) error {
 
 	logger.Info("Context compaction completed", logger.Fields{
 		"summary_length": len(summary),
+		"mode":           mode,
 	})
+	if c.notifier != nil {
+		c.notifier(sess, mode)
+	}
 
 	return nil
 }

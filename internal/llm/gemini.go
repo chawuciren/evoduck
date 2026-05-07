@@ -252,11 +252,19 @@ func (p *GeminiProvider) convertMessages(messages []models.Message) (string, []*
 			}
 			appendContent(genai.RoleModel, parts...)
 		case "tool":
+			images, err := collectProviderImageInputs(m)
+			if err != nil {
+				return "", nil, err
+			}
 			response := map[string]any{"output": m.Content}
 			if strings.HasPrefix(m.Content, "Error:") {
 				response = map[string]any{"error": strings.TrimSpace(strings.TrimPrefix(m.Content, "Error:"))}
 			}
-			part := genai.NewPartFromFunctionResponse(p.toolNameForToolResponse(result, m.ToolCallID), response)
+			responseParts := make([]*genai.FunctionResponsePart, 0, len(images))
+			for _, image := range images {
+				responseParts = append(responseParts, genai.NewFunctionResponsePartFromBytes(image.Data, image.MimeType))
+			}
+			part := genai.NewPartFromFunctionResponseWithParts(p.toolNameForToolResponse(result, m.ToolCallID), response, responseParts)
 			if part.FunctionResponse != nil {
 				part.FunctionResponse.ID = m.ToolCallID
 			}

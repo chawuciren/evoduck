@@ -64,9 +64,14 @@ type geminiCompatibleFunctionCall struct {
 }
 
 type geminiCompatibleFunctionResponse struct {
-	Name     string      `json:"name"`
-	Response interface{} `json:"response,omitempty"`
-	ID       string      `json:"id,omitempty"`
+	Name     string                                 `json:"name"`
+	Response any                                    `json:"response,omitempty"`
+	Parts    []geminiCompatibleFunctionResponsePart `json:"parts,omitempty"`
+	ID       string                                 `json:"id,omitempty"`
+}
+
+type geminiCompatibleFunctionResponsePart struct {
+	InlineData *geminiCompatibleBlob `json:"inlineData,omitempty"`
 }
 
 type geminiCompatibleToolWrap struct {
@@ -364,9 +369,24 @@ func (p *GeminiCompatibleProvider) convertMessages(messages []models.Message) (s
 			}
 			appendContent("model", parts...)
 		case "tool":
+			images, err := collectProviderImageInputs(m)
+			if err != nil {
+				return "", nil, err
+			}
+			response := map[string]any{"output": m.Content}
+			if strings.HasPrefix(m.Content, "Error:") {
+				response = map[string]any{"error": strings.TrimSpace(strings.TrimPrefix(m.Content, "Error:"))}
+			}
+			parts := make([]geminiCompatibleFunctionResponsePart, 0, len(images))
+			for _, image := range images {
+				parts = append(parts, geminiCompatibleFunctionResponsePart{
+					InlineData: &geminiCompatibleBlob{Data: base64EncodeBytes(image.Data), MIMEType: image.MimeType},
+				})
+			}
 			appendContent("user", geminiCompatiblePart{FunctionResponse: &geminiCompatibleFunctionResponse{
 				Name:     p.toolNameForToolResponse(result, m.ToolCallID),
-				Response: map[string]interface{}{"output": m.Content},
+				Response: response,
+				Parts:    parts,
 				ID:       m.ToolCallID,
 			}})
 		default:

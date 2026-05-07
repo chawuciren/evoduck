@@ -56,7 +56,7 @@ type anthropicCompatibleContentBlock struct {
 	Name      string                          `json:"name,omitempty"`
 	Input     map[string]interface{}          `json:"input,omitempty"`
 	ToolUseID string                          `json:"tool_use_id,omitempty"`
-	Content   string                          `json:"content,omitempty"`
+	Content   any                             `json:"content,omitempty"`
 	IsError   bool                            `json:"is_error,omitempty"`
 	Source    *anthropicCompatibleImageSource `json:"source,omitempty"`
 }
@@ -374,10 +374,18 @@ func (p *AnthropicCompatibleProvider) convertMessages(messages []models.Message)
 			}
 			appendMessage("assistant", blocks...)
 		case "tool":
+			images, err := collectProviderImageInputs(m)
+			if err != nil {
+				return "", nil, err
+			}
+			content := any(m.Content)
+			if len(images) > 0 {
+				content = buildToolResultTextParts(m.Content, images)
+			}
 			appendMessage("user", anthropicCompatibleContentBlock{
 				Type:      "tool_result",
 				ToolUseID: m.ToolCallID,
-				Content:   m.Content,
+				Content:   content,
 				IsError:   strings.HasPrefix(m.Content, "Error:"),
 			})
 		default:

@@ -225,6 +225,8 @@ func (p *OpenAICompatibleProvider) Name() string {
 	return p.name
 }
 
+func (p *OpenAICompatibleProvider) RequiresDeferredToolImageReplay() bool { return true }
+
 func (p *OpenAICompatibleProvider) SetDefaultOptions(opts ChatOptions) {
 	p.defaultOptions = opts
 }
@@ -473,16 +475,12 @@ func (p *OpenAICompatibleProvider) convertMessagesWithReasoningPolicy(messages [
 	result := make([]openAIChatMessage, 0, len(messages))
 	for _, m := range messages {
 		msg := openAIChatMessage{Role: normalizeCompatibleRole(m.Role, p.config.Type)}
-		if msg.Role == "user" {
-			images, err := collectProviderImageInputs(m)
-			if err != nil {
-				return nil, err
-			}
-			if len(images) > 0 {
-				msg.Content = buildOpenAICompatibleVisionContent(m.Content, images)
-			} else if strings.TrimSpace(m.Content) != "" {
-				msg.Content = m.Content
-			}
+		images, err := collectProviderImageInputs(m)
+		if err != nil {
+			return nil, err
+		}
+		if msg.Role == "user" && len(images) > 0 {
+			msg.Content = buildOpenAICompatibleVisionContent(m.Content, images)
 		} else if strings.TrimSpace(m.Content) != "" {
 			msg.Content = m.Content
 		}

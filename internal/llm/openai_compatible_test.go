@@ -178,6 +178,36 @@ func TestOpenAICompatibleConvertMessagesIncludesImageParts(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatibleConvertMessagesKeepsToolMessagesTextOnly(t *testing.T) {
+	provider, err := NewOpenAICompatibleProvider("test", config.ProviderConfig{
+		Type:         "openai-compatible",
+		BaseURL:      "https://example.com",
+		DefaultModel: "test-model",
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewOpenAICompatibleProvider() error = %v", err)
+	}
+
+	file := t.TempDir() + "/image.png"
+	if err := os.WriteFile(file, []byte("png-bytes"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	converted, err := provider.(*OpenAICompatibleProvider).convertMessages([]models.Message{
+		{Role: "assistant", ToolCalls: []models.ToolCall{{ID: "call_1", Type: "function", Function: models.ToolCallFunction{Name: "browser_screenshot", Arguments: `{}`}}}},
+		{Role: "tool", ToolCallID: "call_1", Content: "Screenshot captured", Media: []models.OutgoingMedia{{Name: "image.png", MimeType: "image/png", Path: file}}},
+	})
+	if err != nil {
+		t.Fatalf("convertMessages() error = %v", err)
+	}
+	if len(converted) != 2 {
+		t.Fatalf("expected assistant and tool messages, got %d", len(converted))
+	}
+	if text, ok := converted[1].Content.(string); !ok || text != "Screenshot captured" {
+		t.Fatalf("expected text-only tool content, got %#v", converted[1].Content)
+	}
+}
+
 func TestAppendCompatibleMessageToResponseIncludesTopLevelReasoningContent(t *testing.T) {
 	result := &models.Response{}
 	appendCompatibleMessageToResponse(result, openAIChatMessage{

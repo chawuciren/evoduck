@@ -292,6 +292,37 @@ func buildResponsesVisionContent(text string, images []providerImageInput) []map
 	return parts
 }
 
+func buildToolResultTextParts(text string, images []providerImageInput) []map[string]any {
+	parts := make([]map[string]any, 0, len(images)+1)
+	if strings.TrimSpace(text) != "" || len(images) == 0 {
+		parts = append(parts, map[string]any{"type": "text", "text": coalescePromptText(text)})
+	}
+	for _, image := range images {
+		parts = append(parts, map[string]any{
+			"type": "image",
+			"source": map[string]any{
+				"type":       "base64",
+				"media_type": image.MimeType,
+				"data":       base64EncodeBytes(image.Data),
+			},
+		})
+	}
+	return parts
+}
+
+func buildGeminiFunctionResponseParts(images []providerImageInput) []map[string]any {
+	parts := make([]map[string]any, 0, len(images))
+	for _, image := range images {
+		parts = append(parts, map[string]any{
+			"inlineData": map[string]any{
+				"data":     base64EncodeBytes(image.Data),
+				"mimeType": image.MimeType,
+			},
+		})
+	}
+	return parts
+}
+
 func providerImageDataURL(image providerImageInput) string {
 	return "data:" + image.MimeType + ";base64," + base64EncodeBytes(image.Data)
 }

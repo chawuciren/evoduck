@@ -708,10 +708,18 @@ func buildResponsesInput(messages []models.Message) ([]responsesInputItem, error
 			if m.ToolCallID == "" {
 				return nil, fmt.Errorf("tool message missing tool_call_id")
 			}
+			images, err := collectProviderImageInputs(m)
+			if err != nil {
+				return nil, err
+			}
+			output := any(m.Content)
+			if len(images) > 0 {
+				output = buildResponsesVisionContent(m.Content, images)
+			}
 			items = append(items, responsesInputItem{
 				Type:   "function_call_output",
 				CallID: m.ToolCallID,
-				Output: m.Content,
+				Output: output,
 			})
 		default:
 			if strings.TrimSpace(m.Content) == "" {

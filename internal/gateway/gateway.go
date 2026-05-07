@@ -869,6 +869,9 @@ func (g *Gateway) runSessionInputWithMedia(ctx context.Context, agentID, session
 	if g.backgroundRuntime == nil {
 		g.backgroundRuntime = NewBackgroundAgentRuntime(g.agentMgr, g.sessionMgr)
 	}
+	if ag, err := g.agentMgr.Get(agentID); err == nil {
+		g.configureCompactionNotifier(ag)
+	}
 	return g.backgroundRuntime.StartInternalRun(ctx, BackgroundAgentRunRequest{
 		Kind:                "session_input",
 		AgentID:             agentID,
@@ -1377,6 +1380,26 @@ func (g *Gateway) triggerSystemCurationTask(id string, source scheduler.TriggerS
 	}, nil
 }
 
+func (g *Gateway) notifySessionCompaction(sess *session.Session, mode string) {
+	if sess == nil {
+		return
+	}
+	message := "Session context was compacted to keep the conversation within model limits."
+	if strings.EqualFold(strings.TrimSpace(mode), "manual") {
+		message += " (manual)"
+	} else if strings.EqualFold(strings.TrimSpace(mode), "automatic") {
+		message += " (automatic)"
+	}
+	g.sendWSMessageToSession(sess.Key, message, nil, true)
+}
+
+func (g *Gateway) configureCompactionNotifier(ag *agent.Agent) {
+	if ag == nil || ag.Runtime == nil {
+		return
+	}
+	ag.Runtime.SetCompactionNotifier(g.notifySessionCompaction)
+}
+
 func (g *Gateway) CompactSession(agentID string, sess *session.Session) (*command.CompactResult, error) {
 	if sess == nil {
 		return &command.CompactResult{Skipped: true, SkippedReason: "session is not initialized"}, nil
@@ -1389,6 +1412,7 @@ func (g *Gateway) CompactSession(agentID string, sess *session.Session) (*comman
 	if err != nil {
 		return nil, err
 	}
+	g.configureCompactionNotifier(ag)
 	if ag == nil || ag.Runtime == nil {
 		return nil, fmt.Errorf("agent runtime unavailable: %s", agentID)
 	}

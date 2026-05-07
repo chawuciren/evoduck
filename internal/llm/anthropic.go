@@ -270,7 +270,11 @@ func (p *AnthropicProvider) convertMessages(messages []models.Message) (string, 
 			}
 			appendRole(anthropic.MessageParamRoleAssistant, blocks...)
 		case "tool":
-			appendRole(anthropic.MessageParamRoleUser, anthropic.NewToolResultBlock(m.ToolCallID, m.Content, strings.HasPrefix(m.Content, "Error:")))
+			blocks, err := p.toolResultBlocksFromMessage(m)
+			if err != nil {
+				return "", nil, err
+			}
+			appendRole(anthropic.MessageParamRoleUser, blocks...)
 		default:
 			blocks := p.messageBlocksFromText(m.Content)
 			appendRole(anthropic.MessageParamRoleUser, blocks...)
@@ -469,6 +473,37 @@ func (p *AnthropicProvider) messageBlocksFromMessage(message models.Message) ([]
 		blocks = append(blocks, anthropic.NewImageBlockBase64(image.MimeType, base64EncodeBytes(image.Data)))
 	}
 	return blocks, nil
+}
+
+func (p *AnthropicProvider) toolResultBlocksFromMessage(message models.Message) ([]anthropic.ContentBlockParamUnion, error) {
+	images, err := collectProviderImageInputs(message)
+	if err != nil {
+		return nil, err
+	}
+	content := make([]anthropic.ToolResultBlockParamContentUnion, 0, len(images)+1)
+	if strings.TrimSpace(message.Content) != "" || len(images) == 0 {
+		content = append(content, anthropic.ToolResultBlockParamContentUnion{
+			OfText: &anthropic.TextBlockParam{Text: coalescePromptText(message.Content)},
+		})
+	}
+	for _, image := range images {
+		content = append(content, anthropic.ToolResultBlockParamContentUnion{
+			OfImage: &anthropic.ImageBlockParam{
+				Source: anthropic.ImageBlockParamSourceUnion{
+					OfBase64: &anthropic.Base64ImageSourceParam{
+						Data:      base64EncodeBytes(image.Data),
+						MediaType: anthropic.Base64ImageSourceMediaType(image.MimeType),
+					},
+				},
+			},
+		})
+	}
+	toolResult := anthropic.ToolResultBlockParam{
+		ToolUseID: message.ToolCallID,
+		Content:   content,
+		IsError:   anthropic.Bool(strings.HasPrefix(message.Content, "Error:")),
+	}
+	return []anthropic.ContentBlockParamUnion{{OfToolResult: &toolResult}}, nil
 }
 
 func (p *AnthropicProvider) newBlockBuilder(event anthropic.ContentBlockStartEvent) *anthropicBlockBuilder {
