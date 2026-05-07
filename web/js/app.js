@@ -641,9 +641,11 @@ function handleMessage(data) {
 }
 
 // ---- Send / Stop ----
-function sendMessage() {
+function sendComposerMessage(messageOverride) {
     var input = document.getElementById('messageInput');
-    var message = input.value.trim();
+    if (!input) return;
+
+    var message = typeof messageOverride === 'string' ? messageOverride.trim() : input.value.trim();
     var uploadedMedia = getUploadedComposerMedia();
     if ((!message && uploadedMedia.length === 0) || !ws || ws.readyState !== WebSocket.OPEN || composerMediaUploading) return;
     if (uploadedMedia.length > 0 && !composerSupportsVision()) {
@@ -672,6 +674,7 @@ function sendMessage() {
     }));
     addMessage('user', message, null, uploadedMedia);
     input.value = '';
+    hideCommandDropdown();
     clearPendingMedia();
 
     currentStreamMessage = null;
@@ -683,6 +686,14 @@ function sendMessage() {
 
     document.getElementById('typingIndicator').classList.add('active');
     addLog('info', 'Message to ' + (currentAgentId || 'default') + ' [' + sessionKey + ']: text=' + message.length + ' media=' + uploadedMedia.length);
+}
+
+function sendMessage() {
+    sendComposerMessage();
+}
+
+function startNewSession() {
+    sendComposerMessage('/new');
 }
 
 function beginStoppingTask(sessionKey) {
