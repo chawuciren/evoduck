@@ -629,6 +629,7 @@ func (g *Gateway) runWSStream(conn *websocket.Conn, connID string, wsMsg WSMessa
 			ThinkingContent: event.ThinkingContent,
 			ToolID:          event.ToolID,
 			ToolName:        event.ToolName,
+			ToolParams:      event.ToolParams,
 			ToolResult:      event.ToolResult,
 			Iteration:       event.Iteration,
 			Plan:            event.Plan,

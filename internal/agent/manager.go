@@ -3,7 +3,9 @@ package agent
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -92,6 +94,13 @@ type EphemeralRunOptions struct {
 	Metadata map[string]string
 }
 
+type SourceContextCurationOptions struct {
+	TaskKind   string
+	SourceUser string
+	Sessions   []*session.Session
+	Metadata   map[string]string
+}
+
 func ExperienceCuratorConfig(dataDir string, base config.AgentConfig) config.AgentConfig {
 	cfg := base
 	curatorDataDir := filepath.Clean(dataDir)
@@ -163,11 +172,55 @@ func (m *Manager) RunExperienceCuratorEphemeral(ctx context.Context, input strin
 	for key, value := range opts.Metadata {
 		sess.SetMetadataValue(key, value)
 	}
+	return runEphemeralRuntime(ctx, ag, sess, input, startedAt, "experience curator", opts.Metadata)
+}
+
+func (m *Manager) RunSourceContextCurationEphemeral(ctx context.Context, sourceAgentID, targetUserID, basePrompt string, opts SourceContextCurationOptions) (string, error) {
+	startedAt := time.Now()
+	taskKind := strings.TrimSpace(opts.TaskKind)
+	logger.Info("Starting source-context curation run", logger.Fields{
+		"source_agent_id": sourceAgentID,
+		"target_user_id":  targetUserID,
+		"task_kind":       taskKind,
+		"session_count":   len(opts.Sessions),
+	})
+	ag, err := m.Get(sourceAgentID)
+	if err != nil {
+		return "", err
+	}
+	input, err := m.buildSourceContextCurationPrompt(sourceAgentID, targetUserID, strings.TrimSpace(basePrompt), taskKind, opts.Sessions)
+	if err != nil {
+		return "", err
+	}
+	sess := session.NewSession("", fmt.Sprintf("ephemeral-%s-curation", sourceAgentID), nil)
+	sess.SetUserID(targetUserID)
+	sess.SetMetadataValue("ephemeral", "true")
+	sess.SetMetadataValue("session_kind", "source_curation")
+	sess.SetMetadataValue("memory_policy", "ignore")
+	sess.SetMetadataValue("agent_id", sourceAgentID)
+	sess.SetMetadataValue("user_id", targetUserID)
+	sess.SetMetadataValue("actor_user_id", targetUserID)
+	if taskKind != "" {
+		sess.SetMetadataValue("task_kind", taskKind)
+	}
+	if sourceUser := strings.TrimSpace(opts.SourceUser); sourceUser != "" {
+		sess.SetMetadataValue("source_user_id", sourceUser)
+	}
+	if len(opts.Sessions) > 0 {
+		sess.SetMetadataValue("source_session_key", strings.TrimSpace(opts.Sessions[0].Key))
+	}
+	for key, value := range opts.Metadata {
+		sess.SetMetadataValue(key, value)
+	}
+	return runEphemeralRuntime(ctx, ag, sess, input, startedAt, "source-context curation", opts.Metadata)
+}
+
+func runEphemeralRuntime(ctx context.Context, ag *Agent, sess *session.Session, input string, startedAt time.Time, label string, metadata map[string]string) (string, error) {
 	if err := ag.Runtime.Run(ctx, sess, input); err != nil {
-		logger.Error("Experience curator ephemeral run failed", logger.Fields{
+		logger.Error(label+" run failed", logger.Fields{
 			"error":       err.Error(),
 			"duration_ms": time.Since(startedAt).Milliseconds(),
-			"metadata":    opts.Metadata,
+			"metadata":    metadata,
 		})
 		return "", err
 	}
@@ -175,21 +228,175 @@ func (m *Manager) RunExperienceCuratorEphemeral(ctx context.Context, input strin
 	for i := len(msgs) - 1; i >= 0; i-- {
 		if msgs[i].Role == "assistant" && strings.TrimSpace(msgs[i].Content) != "" {
 			report := strings.TrimSpace(msgs[i].Content)
-			logger.Info("Experience curator ephemeral run completed", logger.Fields{
+			logger.Info(label+" run completed", logger.Fields{
 				"duration_ms":   time.Since(startedAt).Milliseconds(),
-				"metadata":      opts.Metadata,
+				"metadata":      metadata,
 				"message_count": len(msgs),
 				"report_chars":  len(report),
 			})
 			return report, nil
 		}
 	}
-	logger.Info("Experience curator ephemeral run completed with empty report", logger.Fields{
+	logger.Info(label+" run completed with empty report", logger.Fields{
 		"duration_ms":   time.Since(startedAt).Milliseconds(),
-		"metadata":      opts.Metadata,
+		"metadata":      metadata,
 		"message_count": len(msgs),
 	})
 	return "", nil
+}
+
+func (m *Manager) buildSourceContextCurationPrompt(sourceAgentID, targetUserID, basePrompt, taskKind string, sourceSessions []*session.Session) (string, error) {
+	var b strings.Builder
+	b.WriteString(basePrompt)
+	b.WriteString("\n\n")
+	b.WriteString("## Target Source Context\n\n")
+	b.WriteString("You are executing a maintenance curation task inside the target source agent and target user context.\n")
+	b.WriteString("The memory, bootstrap, and workspace routing in this run already belong to the target source agent and target user being curated.\n")
+	b.WriteString("Every source-context section below belongs to the target source agent and target user being curated, not to some separate runtime agent.\n\n")
+	b.WriteString("Target binding:\n")
+	b.WriteString(fmt.Sprintf("- source_agent_id: %s\n", sourceAgentID))
+	b.WriteString(fmt.Sprintf("- target_user_id: %s\n", targetUserID))
+	if taskKind != "" {
+		b.WriteString(fmt.Sprintf("- task_kind: %s\n", taskKind))
+	}
+	b.WriteString(fmt.Sprintf("- source_session_count: %d\n", len(sourceSessions)))
+
+	userWorkspace := NewUserWorkspace(UserWorkspaceConfig{DataDir: m.dataDir, AgentID: sourceAgentID, UserID: targetUserID, Enabled: true, AutoCreate: false})
+	recentDailyFiles := recentDailyMemoryFiles(userWorkspace.GetUserMemoryDir(), dailyMemoryWindowForTask(taskKind))
+	appendSourceContextSection(&b, "Target source sessions", "These sessions belong to the target source agent and target user being curated.", renderSourceSessions(sourceSessions, taskKind))
+	appendSourceContextSection(&b, "Target recent daily memory", "These daily notes belong to the target source agent and target user being curated.", renderFileBundle(recentDailyFiles, 3500))
+	appendSourceContextSection(&b, "Target user USER.md", "This file belongs to the target source agent and target user being curated.", readOptionalFile(userWorkspace.GetUserMDPath(), 2500))
+	appendSourceContextSection(&b, "Target user MEMORY.md", "This file belongs to the target source agent and target user being curated.", readOptionalFile(userWorkspace.GetUserMemoryPath(), 3500))
+	appendSourceContextSection(&b, "Target agent AGENTS.md", "This file belongs to the target source agent being curated.", readOptionalFile(filepath.Join(m.dataDir, "agents", sourceAgentID, "AGENTS.md"), 2500))
+	appendSourceContextSection(&b, "Target agent SOUL.md", "This file belongs to the target source agent being curated.", readOptionalFile(filepath.Join(m.dataDir, "agents", sourceAgentID, "SOUL.md"), 2500))
+	appendSourceContextSection(&b, "Target agent TOOLS.md", "This file belongs to the target source agent being curated.", readOptionalFile(filepath.Join(m.dataDir, "agents", sourceAgentID, "TOOLS.md"), 2500))
+	appendSourceContextSection(&b, "Target agent IDENTITY.md", "This file belongs to the target source agent being curated.", readOptionalFile(filepath.Join(m.dataDir, "agents", sourceAgentID, "IDENTITY.md"), 2000))
+	appendSourceContextSection(&b, "Target agent HEARTBEAT.md", "This file belongs to the target source agent being curated.", readOptionalFile(filepath.Join(m.dataDir, "agents", sourceAgentID, "HEARTBEAT.md"), 2000))
+	appendSourceContextSection(&b, "Target agent BOOTSTRAP.md", "This file belongs to the target source agent being curated.", readOptionalFile(filepath.Join(m.dataDir, "agents", sourceAgentID, "BOOTSTRAP.md"), 2000))
+	return b.String(), nil
+}
+
+func appendSourceContextSection(b *strings.Builder, title, prelude, content string) {
+	b.WriteString("\n\n")
+	b.WriteString("## ")
+	b.WriteString(title)
+	b.WriteString("\n\n")
+	b.WriteString(prelude)
+	b.WriteString("\n\n")
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		b.WriteString("(empty)\n")
+		return
+	}
+	b.WriteString(trimmed)
+	b.WriteString("\n")
+}
+
+func renderSourceSessions(sourceSessions []*session.Session, taskKind string) string {
+	if len(sourceSessions) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	messageLimit := 24
+	messageChars := 1000
+	if strings.EqualFold(strings.TrimSpace(taskKind), "memory_curation") {
+		messageLimit = 12
+		messageChars = 700
+	}
+	for i, sess := range sourceSessions {
+		if sess == nil {
+			continue
+		}
+		b.WriteString(fmt.Sprintf("### Session %d\n", i+1))
+		b.WriteString(fmt.Sprintf("- session_key: %s\n", sess.Key))
+		b.WriteString(fmt.Sprintf("- session_user_id: %s\n", sess.GetUserID()))
+		if actor := strings.TrimSpace(sess.GetMetadataValue("actor_user_id")); actor != "" {
+			b.WriteString(fmt.Sprintf("- actor_user_id: %s\n", actor))
+		}
+		b.WriteString(fmt.Sprintf("- updated_at: %s\n\n", sess.UpdatedAt.Format(time.RFC3339)))
+		messages := sess.GetMessages()
+		if len(messages) > messageLimit {
+			messages = messages[len(messages)-messageLimit:]
+		}
+		for idx, msg := range messages {
+			if msg.Role == "tool" {
+				continue
+			}
+			content := strings.TrimSpace(msg.Content)
+			if content == "" {
+				continue
+			}
+			if len(content) > messageChars {
+				content = content[:messageChars] + "..."
+			}
+			b.WriteString(fmt.Sprintf("[%d] %s: %s\n", idx, strings.ToUpper(msg.Role), content))
+		}
+		b.WriteString("\n")
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func dailyMemoryWindowForTask(taskKind string) int {
+	if strings.EqualFold(strings.TrimSpace(taskKind), "experience_curation") {
+		return 4
+	}
+	return 2
+}
+
+func recentDailyMemoryFiles(dir string, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	files := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".md") {
+			continue
+		}
+		files = append(files, filepath.Join(dir, entry.Name()))
+	}
+	sort.Strings(files)
+	if len(files) > limit {
+		files = files[len(files)-limit:]
+	}
+	return files
+}
+
+func renderFileBundle(paths []string, maxCharsPerFile int) string {
+	if len(paths) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(paths))
+	for _, path := range paths {
+		content := readOptionalFile(path, maxCharsPerFile)
+		if strings.TrimSpace(content) == "" {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("### %s\n\n%s", filepath.Base(path), content))
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+func readOptionalFile(path string, maxChars int) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	content := strings.TrimSpace(string(data))
+	if content == "" {
+		return ""
+	}
+	if maxChars > 0 && len(content) > maxChars {
+		content = content[:maxChars] + "\n...\n[TRUNCATED]"
+	}
+	return content
 }
 
 func (m *Manager) runExperienceCuratorPreCompact(ctx context.Context, sourceSess *session.Session, msgs []models.Message) (string, error) {

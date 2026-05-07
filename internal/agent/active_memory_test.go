@@ -102,6 +102,8 @@ type memoryToolCallProvider struct {
 	stream bool
 }
 
+type sourceContextCurationProvider struct{}
+
 func (p *memoryToolCallProvider) Name() string { return "memory-tool-call" }
 func (p *memoryToolCallProvider) Chat(_ context.Context, messages []models.Message, _ []models.ToolDefinition) (*models.Response, error) {
 	for _, msg := range messages {
@@ -138,6 +140,41 @@ func (p *memoryToolCallProvider) ChatStream(_ context.Context, messages []models
 	}()
 	return ch, nil
 }
+
+func (p *sourceContextCurationProvider) Name() string { return "source-curation" }
+func (p *sourceContextCurationProvider) Chat(_ context.Context, messages []models.Message, _ []models.ToolDefinition) (*models.Response, error) {
+	toolMessages := 0
+	for _, msg := range messages {
+		if msg.Role == "tool" {
+			toolMessages++
+		}
+	}
+	switch toolMessages {
+	case 0:
+		return &models.Response{ToolCalls: []models.ToolCall{{
+			ID: "call-user-memory-write",
+			Function: models.ToolCallFunction{
+				Name:      "memory_write",
+				Arguments: `{"path":"MEMORY.md","content":"Target user durable fact"}`,
+			},
+		}}}, nil
+	case 1:
+		return &models.Response{ToolCalls: []models.ToolCall{{
+			ID: "call-agent-bootstrap-write",
+			Function: models.ToolCallFunction{
+				Name:      "memory_write",
+				Arguments: `{"path":"AGENTS.md","content":"Target agent operating rule"}`,
+			},
+		}}}, nil
+	default:
+		return &models.Response{Content: "done"}, nil
+	}
+}
+func (p *sourceContextCurationProvider) ChatStream(_ context.Context, messages []models.Message, _ []models.ToolDefinition) (<-chan models.StreamEvent, error) {
+	ch := make(chan models.StreamEvent)
+	close(ch)
+	return ch, nil
+}
 func (p *memoryToolCallProvider) ChatWithOptions(ctx context.Context, messages []models.Message, tools []models.ToolDefinition, _ llm.ChatOptions) (*models.Response, error) {
 	return p.Chat(ctx, messages, tools)
 }
@@ -148,6 +185,18 @@ func (p *memoryToolCallProvider) FetchModels(_ context.Context) ([]llm.ProviderM
 	return nil, nil
 }
 func (p *memoryToolCallProvider) ListModels(_ context.Context) ([]llm.ProviderModel, error) {
+	return nil, nil
+}
+func (p *sourceContextCurationProvider) ChatWithOptions(ctx context.Context, messages []models.Message, tools []models.ToolDefinition, _ llm.ChatOptions) (*models.Response, error) {
+	return p.Chat(ctx, messages, tools)
+}
+func (p *sourceContextCurationProvider) SetDefaultOptions(_ llm.ChatOptions) {}
+func (p *sourceContextCurationProvider) GetMaxContextTokens() int            { return 8192 }
+func (p *sourceContextCurationProvider) BuiltinModels() []llm.ProviderModel  { return nil }
+func (p *sourceContextCurationProvider) FetchModels(_ context.Context) ([]llm.ProviderModel, error) {
+	return nil, nil
+}
+func (p *sourceContextCurationProvider) ListModels(_ context.Context) ([]llm.ProviderModel, error) {
 	return nil, nil
 }
 
@@ -189,6 +238,78 @@ func TestRunStreamUsesActorUserForMemoryTools(t *testing.T) {
 		}
 	}
 	assertAliceMemoryOnly(t, dataDir)
+}
+
+func TestRunSourceContextCurationEphemeralRoutesMemoryToTargetNamespace(t *testing.T) {
+	root := t.TempDir()
+	llmReg, err := llm.NewRegistry(config.LLMConfig{
+		DefaultProvider: "source-curation",
+		DefaultModel:    "stub-model",
+		Providers:       map[string]config.ProviderConfig{},
+	}, nil)
+	if err != nil {
+		t.Fatalf("new llm registry: %v", err)
+	}
+	if err := llmReg.RegisterDynamic("source-curation", &sourceContextCurationProvider{}); err != nil {
+		t.Fatalf("register provider: %v", err)
+	}
+
+	mgr := NewManager(llmReg, root, filepath.Join(root, "shared", "skills"), config.BackendCallConfig{}, config.SessionToolConfig{}, config.MemoryConfig{}, nil, nil, nil)
+	if err := mgr.Register("source-agent", config.AgentConfig{
+		Workspace: filepath.Join(root, "agents", "source-agent"),
+		Provider:  "source-curation",
+		Model:     "stub-model",
+		Role:      string(models.RoleAdmin),
+	}); err != nil {
+		t.Fatalf("register source agent: %v", err)
+	}
+	if err := mgr.Register(ExperienceCuratorID, ExperienceCuratorConfig(root, config.AgentConfig{Provider: "source-curation", Model: "stub-model"})); err != nil {
+		t.Fatalf("register curator: %v", err)
+	}
+	curatorAgentPath := filepath.Join(root, "agents", ExperienceCuratorID, "AGENTS.md")
+	curatorBefore, err := os.ReadFile(curatorAgentPath)
+	if err != nil {
+		t.Fatalf("read curator AGENTS.md before run: %v", err)
+	}
+
+	sess := session.NewSession("agent:source-agent:user:alice:ws", "sess-1", nil)
+	sess.SetUserID("alice")
+	sess.SetMetadataValue("actor_user_id", "alice")
+	sess.Append(models.Message{Role: "user", Content: "please keep this preference"})
+
+	report, err := mgr.RunSourceContextCurationEphemeral(context.Background(), "source-agent", "alice", "curate this target context", SourceContextCurationOptions{
+		TaskKind: "memory_curation",
+		Sessions: []*session.Session{sess},
+	})
+	if err != nil {
+		t.Fatalf("RunSourceContextCurationEphemeral: %v", err)
+	}
+	if strings.TrimSpace(report) != "done" {
+		t.Fatalf("expected done report, got %q", report)
+	}
+
+	targetUserPath := filepath.Join(root, "users", "source-agent_user_alice", "MEMORY.md")
+	if data, err := os.ReadFile(targetUserPath); err != nil || string(data) != "Target user durable fact" {
+		t.Fatalf("expected target user memory at %s, data=%q err=%v", targetUserPath, string(data), err)
+	}
+	targetAgentPath := filepath.Join(root, "agents", "source-agent", "AGENTS.md")
+	if data, err := os.ReadFile(targetAgentPath); err != nil || string(data) != "Target agent operating rule" {
+		t.Fatalf("expected target agent bootstrap at %s, data=%q err=%v", targetAgentPath, string(data), err)
+	}
+	curatorUserPath := filepath.Join(root, "users", "experience-curator_user_alice", "MEMORY.md")
+	if _, err := os.Stat(curatorUserPath); !os.IsNotExist(err) {
+		t.Fatalf("did not expect curator user memory namespace write, stat err=%v", err)
+	}
+	curatorAfter, err := os.ReadFile(curatorAgentPath)
+	if err != nil {
+		t.Fatalf("read curator AGENTS.md after run: %v", err)
+	}
+	if string(curatorAfter) != string(curatorBefore) {
+		t.Fatalf("did not expect curator AGENTS.md to change\nbefore:\n%s\nafter:\n%s", string(curatorBefore), string(curatorAfter))
+	}
+	if string(curatorAfter) == "Target agent operating rule" {
+		t.Fatalf("did not expect target agent bootstrap content to land in curator namespace")
+	}
 }
 
 func assertAliceMemoryOnly(t *testing.T, dataDir string) {

@@ -59,6 +59,8 @@ type cancellableStreamProvider struct {
 	started chan string
 }
 
+type curationReportProvider struct{}
+
 func (p *scheduleBindingProvider) Name() string { return "stub" }
 func (p *scheduleBindingProvider) Chat(_ context.Context, _ []models.Message, _ []models.ToolDefinition) (*models.Response, error) {
 	return &models.Response{Content: "ok"}, nil
@@ -115,6 +117,72 @@ func (p *cancellableStreamProvider) FetchModels(_ context.Context) ([]llm.Provid
 	return nil, nil
 }
 func (p *cancellableStreamProvider) ListModels(_ context.Context) ([]llm.ProviderModel, error) {
+	return nil, nil
+}
+
+func (p *curationReportProvider) Name() string { return "curation-report" }
+func (p *curationReportProvider) Chat(_ context.Context, messages []models.Message, _ []models.ToolDefinition) (*models.Response, error) {
+	toolMessages := 0
+	promptText := ""
+	for _, msg := range messages {
+		if msg.Role == "tool" {
+			toolMessages++
+		}
+		if promptText == "" && msg.Role == "user" {
+			promptText = msg.Content
+		}
+	}
+	isDaily := strings.Contains(promptText, "task_kind: experience_curation") || strings.Contains(promptText, "daily-report")
+	if !isDaily {
+		switch toolMessages {
+		case 0:
+			return &models.Response{ToolCalls: []models.ToolCall{{
+				ID: "call-hourly-daily-log",
+				Function: models.ToolCallFunction{
+					Name:      "memory_write",
+					Arguments: `{"path":"memory/2026-05-08.md","content":"Hourly curation log\n- captured session preference: concise updates"}`,
+				},
+			}}}, nil
+		default:
+			return &models.Response{Content: "hourly-report: updated memory/2026-05-08.md with concise-updates note"}, nil
+		}
+	}
+	switch toolMessages {
+	case 0:
+		return &models.Response{ToolCalls: []models.ToolCall{{
+			ID: "call-daily-memory",
+			Function: models.ToolCallFunction{
+				Name:      "memory_write",
+				Arguments: `{"path":"MEMORY.md","content":"Durable user preference: concise updates"}`,
+			},
+		}}}, nil
+	case 1:
+		return &models.Response{ToolCalls: []models.ToolCall{{
+			ID: "call-daily-agents",
+			Function: models.ToolCallFunction{
+				Name:      "memory_write",
+				Arguments: `{"path":"AGENTS.md","content":"Always keep curation summaries concise and target-bound."}`,
+			},
+		}}}, nil
+	default:
+		return &models.Response{Content: "daily-report: updated MEMORY.md and AGENTS.md for the target namespace"}, nil
+	}
+}
+func (p *curationReportProvider) ChatStream(_ context.Context, _ []models.Message, _ []models.ToolDefinition) (<-chan models.StreamEvent, error) {
+	ch := make(chan models.StreamEvent)
+	close(ch)
+	return ch, nil
+}
+func (p *curationReportProvider) ChatWithOptions(ctx context.Context, messages []models.Message, tools []models.ToolDefinition, _ llm.ChatOptions) (*models.Response, error) {
+	return p.Chat(ctx, messages, tools)
+}
+func (p *curationReportProvider) SetDefaultOptions(_ llm.ChatOptions) {}
+func (p *curationReportProvider) GetMaxContextTokens() int            { return 8192 }
+func (p *curationReportProvider) BuiltinModels() []llm.ProviderModel  { return nil }
+func (p *curationReportProvider) FetchModels(_ context.Context) ([]llm.ProviderModel, error) {
+	return nil, nil
+}
+func (p *curationReportProvider) ListModels(_ context.Context) ([]llm.ProviderModel, error) {
 	return nil, nil
 }
 
@@ -324,6 +392,65 @@ func TestExecuteCuratorSystemTaskUsesEphemeralSession(t *testing.T) {
 	}
 	if _, err := gw.GetSessionManagerRaw().Get(record.ExecutionSessionKey); err == nil {
 		t.Fatalf("expected no persistent schedule session for curator system task")
+	}
+}
+
+func TestDiscoverSystemCurationTargetsGroupsOrdinarySessionsByAgentAndUser(t *testing.T) {
+	root := t.TempDir()
+	llmReg, err := llm.NewRegistry(config.LLMConfig{
+		DefaultProvider: "stub",
+		DefaultModel:    "stub-model",
+		Providers:       map[string]config.ProviderConfig{},
+	}, nil)
+	if err != nil {
+		t.Fatalf("new llm registry: %v", err)
+	}
+	if err := llmReg.RegisterDynamic("stub", &scheduleBindingProvider{}); err != nil {
+		t.Fatalf("register dynamic provider: %v", err)
+	}
+	agentMgr := agent.NewManager(llmReg, root, filepath.Join(root, "shared", "skills"), config.BackendCallConfig{}, config.SessionToolConfig{}, config.MemoryConfig{}, nil, nil, nil)
+	gw := New(&config.Config{DataDir: root, DefaultAgent: "agent-a"}, filepath.Join(root, "config.yaml"), llmReg, agentMgr, nil, nil)
+
+	makeSession := func(key, agentID, userID, actorUserID, kind, memoryPolicy string, updatedAt time.Time, message string) {
+		sess := gw.GetOrCreateSession(key)
+		sess.SetUserID(userID)
+		sess.SetMetadataValue("agent_id", agentID)
+		sess.SetMetadataValue("session_kind", kind)
+		sess.SetMetadataValue("memory_policy", memoryPolicy)
+		sess.SetMetadataValue("actor_user_id", actorUserID)
+		sess.Append(models.Message{Role: "user", Content: message})
+		sess.UpdatedAt = updatedAt
+	}
+
+	now := time.Now()
+	makeSession("agent:agent-a:user:u1:ws", "agent-a", "u1", "u1", "normal", "", now.Add(-20*time.Minute), "recent user session a1")
+	makeSession("agent:agent-a:user:u1:web", "agent-a", "u1", "u1", "normal", "", now.Add(-5*time.Minute), "recent user session a2")
+	makeSession("agent:agent-b:user:u2:ws", "agent-b", "u2", "u2", "", "", now.Add(-15*time.Minute), "recent user session b1")
+	makeSession("agent:agent-b:user:u2:ws:ignored", "agent-b", "u2", "u2", "normal", "ignore", now.Add(-10*time.Minute), "ignored memory policy")
+	makeSession("agent:agent-a:user:u1:schedule:task-1", "agent-a", "u1", "u1", "schedule", "", now.Add(-8*time.Minute), "scheduled session")
+	makeSession("agent:experience-curator:user:u1:ws", agent.ExperienceCuratorID, "u1", "u1", "normal", "", now.Add(-7*time.Minute), "curator session")
+	makeSession("agent:agent-c:user:u3:ws", "agent-c", "u3", "u3", "system_task", "", now.Add(-6*time.Minute), "system task session")
+	makeSession("agent:agent-old:user:u4:ws", "agent-old", "u4", "u4", "normal", "", now.Add(-3*time.Hour), "stale session")
+	gw.GetOrCreateSession("agent:agent-empty:user:u5:ws").SetMetadataValue("agent_id", "agent-empty")
+
+	targets := gw.discoverSystemCurationTargets("memory_curation")
+	if len(targets) != 2 {
+		t.Fatalf("expected 2 curation targets, got %#v", targets)
+	}
+	if targets[0].SourceAgentID != "agent-a" || targets[0].TargetUserID != "u1" {
+		t.Fatalf("unexpected first target: %#v", targets[0])
+	}
+	if len(targets[0].Sessions) != 2 {
+		t.Fatalf("expected 2 sessions for agent-a/u1, got %d", len(targets[0].Sessions))
+	}
+	if targets[0].Sessions[0].Key != "agent:agent-a:user:u1:web" {
+		t.Fatalf("expected newest session first, got %q", targets[0].Sessions[0].Key)
+	}
+	if targets[1].SourceAgentID != "agent-b" || targets[1].TargetUserID != "u2" {
+		t.Fatalf("unexpected second target: %#v", targets[1])
+	}
+	if len(targets[1].Sessions) != 1 || targets[1].Sessions[0].Key != "agent:agent-b:user:u2:ws" {
+		t.Fatalf("unexpected sessions for agent-b/u2: %#v", targets[1].Sessions)
 	}
 }
 
@@ -704,6 +831,107 @@ func TestHandleWSHistoryUsesExplicitScheduleSessionKey(t *testing.T) {
 			t.Fatalf("expected websocket connection to bind to explicit schedule session %q, got %#v", scheduleSessionKey, bound)
 		}
 	}
+}
+
+func TestTriggerHourlyCurationProducesReportableArtifacts(t *testing.T) {
+	root := t.TempDir()
+	llmReg, err := llm.NewRegistry(config.LLMConfig{
+		DefaultProvider: "curation-report",
+		DefaultModel:    "stub-model",
+		Providers:       map[string]config.ProviderConfig{},
+	}, nil)
+	if err != nil {
+		t.Fatalf("new llm registry: %v", err)
+	}
+	if err := llmReg.RegisterDynamic("curation-report", &curationReportProvider{}); err != nil {
+		t.Fatalf("register provider: %v", err)
+	}
+	agentMgr := agent.NewManager(llmReg, root, filepath.Join(root, "shared", "skills"), config.BackendCallConfig{}, config.SessionToolConfig{}, config.MemoryConfig{}, nil, nil, nil)
+	if err := agentMgr.Register("source-agent", config.AgentConfig{Workspace: filepath.Join(root, "agents", "source-agent"), Provider: "curation-report", Model: "stub-model", Role: string(models.RoleAdmin)}); err != nil {
+		t.Fatalf("register source agent: %v", err)
+	}
+	if err := agentMgr.Register(agent.ExperienceCuratorID, agent.ExperienceCuratorConfig(root, config.AgentConfig{Provider: "curation-report", Model: "stub-model"})); err != nil {
+		t.Fatalf("register curator: %v", err)
+	}
+	gw := New(&config.Config{DataDir: root, DefaultAgent: "source-agent"}, filepath.Join(root, "config.yaml"), llmReg, agentMgr, nil, nil)
+
+	sess := gw.GetOrCreateSession("agent:source-agent:user:alice:ws")
+	sess.SetUserID("alice")
+	sess.SetMetadataValue("agent_id", "source-agent")
+	sess.SetMetadataValue("actor_user_id", "alice")
+	sess.SetMetadataValue("session_kind", "normal")
+	sess.Append(models.Message{Role: "user", Content: "Please remember I prefer concise updates."})
+	sess.UpdatedAt = time.Now().Add(-10 * time.Minute)
+
+	record := scheduler.ScheduleRecord{ID: "system:memory-curation", AgentID: agent.ExperienceCuratorID, Metadata: map[string]string{"task_kind": "memory_curation"}}
+	if err := gw.executeCuratorSystemTask(record, "memory_curation", "hourly-report"); err != nil {
+		t.Fatalf("execute curator hourly task: %v", err)
+	}
+
+	dailyPath := filepath.Join(root, "users", "source-agent_user_alice", "memory", "2026-05-08.md")
+	data, err := os.ReadFile(dailyPath)
+	if err != nil {
+		t.Fatalf("read hourly curation result: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "Hourly curation log") || !strings.Contains(content, "concise updates") {
+		t.Fatalf("unexpected hourly artifact: %q", content)
+	}
+	t.Logf("hourly report\n- target: source-agent/alice\n- selected sessions: 1\n- updated files: users/source-agent_user_alice/memory/2026-05-08.md\n- artifact summary: %s", strings.ReplaceAll(strings.TrimSpace(content), "\n", " | "))
+}
+
+func TestTriggerDailyCurationProducesReportableArtifacts(t *testing.T) {
+	root := t.TempDir()
+	llmReg, err := llm.NewRegistry(config.LLMConfig{
+		DefaultProvider: "curation-report",
+		DefaultModel:    "stub-model",
+		Providers:       map[string]config.ProviderConfig{},
+	}, nil)
+	if err != nil {
+		t.Fatalf("new llm registry: %v", err)
+	}
+	if err := llmReg.RegisterDynamic("curation-report", &curationReportProvider{}); err != nil {
+		t.Fatalf("register provider: %v", err)
+	}
+	agentMgr := agent.NewManager(llmReg, root, filepath.Join(root, "shared", "skills"), config.BackendCallConfig{}, config.SessionToolConfig{}, config.MemoryConfig{}, nil, nil, nil)
+	if err := agentMgr.Register("source-agent", config.AgentConfig{Workspace: filepath.Join(root, "agents", "source-agent"), Provider: "curation-report", Model: "stub-model", Role: string(models.RoleAdmin)}); err != nil {
+		t.Fatalf("register source agent: %v", err)
+	}
+	if err := agentMgr.Register(agent.ExperienceCuratorID, agent.ExperienceCuratorConfig(root, config.AgentConfig{Provider: "curation-report", Model: "stub-model"})); err != nil {
+		t.Fatalf("register curator: %v", err)
+	}
+	gw := New(&config.Config{DataDir: root, DefaultAgent: "source-agent"}, filepath.Join(root, "config.yaml"), llmReg, agentMgr, nil, nil)
+
+	sess := gw.GetOrCreateSession("agent:source-agent:user:alice:ws")
+	sess.SetUserID("alice")
+	sess.SetMetadataValue("agent_id", "source-agent")
+	sess.SetMetadataValue("actor_user_id", "alice")
+	sess.SetMetadataValue("session_kind", "normal")
+	sess.Append(models.Message{Role: "user", Content: "Across sessions, keep updates concise and target-bound."})
+	sess.UpdatedAt = time.Now().Add(-2 * time.Hour)
+
+	record := scheduler.ScheduleRecord{ID: "system:experience-curation", AgentID: agent.ExperienceCuratorID, Metadata: map[string]string{"task_kind": "experience_curation"}}
+	if err := gw.executeCuratorSystemTask(record, "experience_curation", "daily-report"); err != nil {
+		t.Fatalf("execute curator daily task: %v", err)
+	}
+
+	memoryPath := filepath.Join(root, "users", "source-agent_user_alice", "MEMORY.md")
+	agentsPath := filepath.Join(root, "agents", "source-agent", "AGENTS.md")
+	memoryData, err := os.ReadFile(memoryPath)
+	if err != nil {
+		t.Fatalf("read daily MEMORY.md: %v", err)
+	}
+	agentsData, err := os.ReadFile(agentsPath)
+	if err != nil {
+		t.Fatalf("read daily AGENTS.md: %v", err)
+	}
+	if !strings.Contains(string(memoryData), "Durable user preference: concise updates") {
+		t.Fatalf("unexpected daily MEMORY.md: %q", string(memoryData))
+	}
+	if !strings.Contains(string(agentsData), "Always keep curation summaries concise and target-bound.") {
+		t.Fatalf("unexpected daily AGENTS.md: %q", string(agentsData))
+	}
+	t.Logf("daily report\n- target: source-agent/alice\n- selected sessions: 1\n- updated files: users/source-agent_user_alice/MEMORY.md, agents/source-agent/AGENTS.md\n- MEMORY.md: %s\n- AGENTS.md: %s", strings.TrimSpace(string(memoryData)), strings.TrimSpace(string(agentsData)))
 }
 
 func TestTriggerScheduleUsesManualSource(t *testing.T) {

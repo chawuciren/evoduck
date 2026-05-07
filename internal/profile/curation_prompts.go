@@ -1,129 +1,190 @@
 package profile
 
 func DefaultHourlyMemoryCurationPrompt() string {
-	return `Run hourly memory_curation.
+	return `Run hourly memory_curation. Curate recent ordinary user sessions into accurate memory artifacts.
 
-Curate recent ordinary user sessions into accurate user memory artifacts. Keep this task lightweight, but do not be so conservative that meaningful user-facing sessions leave no trace.
+**Core Objective:**
+- Capture session continuity in daily logs.
+- **CLASSIFY AND ROUTE** durable information to the **CORRECT** long-lived memory file based on its nature.
+- Treat all user memory files and source-agent bootstrap files as **equal destinations** for their respective data types.
+- Do not leave meaningful durable information trapped in daily logs.
 
-Primary goal:
-- Maintain user-side and source-agent Markdown memory artifacts only.
-- Update daily memory by default.
-- Promote clearly durable user or agent-specific information into the correct long-lived Markdown file when justified.
-- Do not create or update shared knowledge or shared skills during hourly memory curation.
+**Scope & Input:**
+- Analyze recent user sessions and existing memory files.
+- Curate one source agent/user pair at a time.
+- All curated artifacts live under the user's '.evoduck' data directory.
+- File-tool paths are rooted at that global '.evoduck' data directory.
+- Do not write relative to the current workspace.
+- Do not prefix paths with 'data/' if file tools are already rooted at the '.evoduck' data directory.
+- For source-agent user-level and agent-level artifacts, use file tools with explicit paths.
+- Do not use memory_write or memory_edit for arbitrary source-agent artifacts because those tools route by the current curator agent namespace rather than the source-agent namespace.
+- Use memory_* tools only for the curator's own namespace when explicitly needed.
+- **ALWAYS read existing target files before writing** to consolidate and avoid duplicates.
 
-Scope:
-- Use recent sessions and existing user memory as primary input.
-- Curate one source agent/user pair at a time. Derive source_agent_id and user_id from session keys and existing users/ directories.
-- Use file tools rooted at the global data directory for source-agent user memory under users/<source_agent_id>_user_<user_id>/.
-- Do not use memory_write for source-agent memory because it writes the curator namespace.
-- Inspect existing relevant files before writing.
+**Directory Layout:**
+- User-level artifacts live under 'users/<source_agent_id>_user_<user_id>/':
+  - 'USER.md'
+  - 'MEMORY.md'
+  - 'memory/YYYY-MM-DD.md'
+- Agent-level bootstrap artifacts live under 'agents/<source_agent_id>/':
+  - 'AGENTS.md'
+  - 'SOUL.md'
+  - 'TOOLS.md'
+  - 'IDENTITY.md'
+  - 'HEARTBEAT.md'
+  - 'BOOTSTRAP.md'
 
 User-side files and their roles:
-- memory/YYYY-MM-DD.md: same-day session notes, casual continuity, temporary context, research notes, tests, and other useful daily facts that may or may not outlive the day.
-- MEMORY.md: durable facts, recurring context, preferences, constraints, decisions, collaboration rules, and important project context that should outlive the day.
-- USER.md: confirmed profile information about this specific user, such as preferred name, background, relationship with the agent, response preferences, and durable boundaries.
+- 'memory/YYYY-MM-DD.md'
+- 'MEMORY.md'
+- 'USER.md'
 
 Source-agent bootstrap files and their roles:
-- AGENTS.md: durable operating rules for how the source agent should collaborate, behave, decide, remember, or persist information across future conversations.
-- SOUL.md: durable agent identity, such as name, role, mission, tone, and stable boundaries or taboos.
-- TOOLS.md: durable tool-usage rules, tool preferences, and tool boundaries for the source agent.
-- IDENTITY.md: structured durable identity details for the source agent when that file already serves that role.
-- HEARTBEAT.md: durable maintenance cadence, self-check, or recurring operational commitments for the source agent when that file already serves that role.
-- BOOTSTRAP.md: durable startup, initialization, or onboarding rules for the source agent when that file already serves that role.
+- 'AGENTS.md'
+- 'SOUL.md'
+- 'TOOLS.md'
+- 'IDENTITY.md'
+- 'HEARTBEAT.md'
+- 'BOOTSTRAP.md'
 
-Rules:
-- Update memory/YYYY-MM-DD.md by default for each meaningful recent ordinary user-facing session, including casual chat when it helps continuity.
-- Promote to MEMORY.md when information is clearly useful beyond the day even if it is not a formal user profile field.
-- Update USER.md when the session confirms or refines user-specific profile information or durable preferences.
-- Update AGENTS.md when the session reveals or confirms durable operating rules for the source agent.
-- Update SOUL.md when the session reveals or confirms durable agent identity, role, mission, tone, or boundaries.
-- Update TOOLS.md, IDENTITY.md, HEARTBEAT.md, or BOOTSTRAP.md only when the file already exists or when the session clearly supports that specific file role; do not invent overlapping bootstrap structure without evidence.
-- Prefer updating, consolidating, or rewriting existing content over appending duplicates.
-- Replace superseded content instead of keeping conflicting old and new versions.
-- Skip writes only for pure system/tool noise, unsupported inference, or points already accurately captured in the correct file.
-- Do not create or update shared knowledge during hourly memory curation.
-- Do not create or update skills during hourly memory curation.
-- Do not send user-facing messages.
+**File Roles & Triggers (Equal Importance):**
 
-Decision guidance:
-- If something is mainly about today, keep it in memory/YYYY-MM-DD.md.
-- If it should still matter next week, consider MEMORY.md, USER.md, or one of the source-agent bootstrap files.
-- Put user profile facts in USER.md.
-- Put durable user or project continuity in MEMORY.md.
-- Put source-agent operating rules in AGENTS.md.
-- Put source-agent identity in SOUL.md.
-- Put source-agent tool rules in TOOLS.md.
-- Use IDENTITY.md, HEARTBEAT.md, and BOOTSTRAP.md only when their scope is already established by existing file content or by strong direct evidence.
+1. **users/<source_agent_id>_user_<user_id>/memory/YYYY-MM-DD.md** (Daily Log):
+   - **Boundary:** Same-day notes, casual continuity, temporary context, research notes, tests, and other useful daily facts that may or may not outlive the day.
+   - **Trigger:** Every meaningful user-facing session requires a summary here.
 
-Finish with a concise internal summary listing files updated, files skipped, and why.`
+2. **users/<source_agent_id>_user_<user_id>/MEMORY.md** (User Long-term Memory):
+   - **Boundary:** Durable facts, recurring context, preferences, constraints, decisions, collaboration rules, and important project context that should outlive the day.
+   - **Trigger:** User preferences, constraints, recurring context, key project decisions, technical facts, or collaboration rules that matter beyond today.
+
+3. **users/<source_agent_id>_user_<user_id>/USER.md** (User Profile):
+   - **Boundary:** Confirmed profile information about this specific user, such as preferred name, background, relationship with the agent, response preferences, and durable boundaries.
+   - **Trigger:** Confirmed profile info (name, background, response style, boundaries). Update only when explicitly confirmed or refined.
+
+4. **agents/<source_agent_id>/AGENTS.md** (Agent Operating Rules):
+   - **Boundary:** Durable operating rules for how the source agent should collaborate, behave, decide, remember, or persist information across future conversations.
+   - **Trigger:** Session reveals or confirms a durable operating rule (e.g., "Always do X when Y", "Collaborate with Z tool").
+
+5. **agents/<source_agent_id>/SOUL.md** (Agent Identity):
+   - **Boundary:** Durable agent identity, such as name, role, mission, tone, and stable boundaries or taboos.
+   - **Trigger:** Session reveals or confirms agent identity details (name, role, mission, tone, boundaries).
+
+6. **agents/<source_agent_id>/TOOLS.md** (Agent Tool Rules):
+   - **Boundary:** Durable tool-usage rules, tool preferences, and tool boundaries for the source agent.
+   - **Trigger:** Session reveals or confirms specific tool usage patterns, preferences, or limitations.
+
+7. **agents/<source_agent_id>/IDENTITY.md**, **HEARTBEAT.md**, **BOOTSTRAP.md**:
+   - **Boundary:** Structured identity, maintenance cadence, or startup/onboarding rules for the source agent only when that role is already established by existing file content or strong direct evidence.
+   - **Trigger:** Update only when the session clearly supports that specific file role. Do not invent overlapping bootstrap structure without evidence.
+
+**Execution Rules:**
+- **Equal Treatment:** Do not favor one file type over another. If information matches a file's boundary, it **MUST** be written there.
+- **No "Default" Laziness:** Do not rely on 'users/<source_agent_id>_user_<user_id>/memory/YYYY-MM-DD.md' as the sole destination. If information is durable, route it to the specific user-level or agent-level file.
+- **Consolidate:** Prefer updating/rewriting existing entries over appending duplicates. Replace superseded content.
+- **Skip Noise:** Ignore pure system logs or unsupported inferences.
+- **No Shared Knowledge:** Do not touch shared knowledge or skills during this task.
+- **Silent Execution:** Do not send user-facing messages.
+
+**Workflow:**
+1. Read recent sessions.
+2. Derive 'source_agent_id' and 'user_id'.
+3. Read the existing target files under 'users/<source_agent_id>_user_<user_id>/' and 'agents/<source_agent_id>/' before modifying them.
+4. Log the session summary to 'users/<source_agent_id>_user_<user_id>/memory/YYYY-MM-DD.md'.
+5. **Scan session for durable facts.**
+6. **Classify facts:**
+   - Is it user fact? -> 'users/<source_agent_id>_user_<user_id>/MEMORY.md' or 'USER.md'
+   - Is it agent rule? -> 'agents/<source_agent_id>/AGENTS.md'
+   - Is it agent identity? -> 'agents/<source_agent_id>/SOUL.md' or 'IDENTITY.md' when that file already serves that role
+   - Is it tool rule? -> 'agents/<source_agent_id>/TOOLS.md'
+   - Is it maintenance/startup guidance? -> 'agents/<source_agent_id>/HEARTBEAT.md' or 'BOOTSTRAP.md' only when clearly justified
+7. **Promote** facts to the correct file(s).
+8. Finish with a concise internal summary of files updated.`
 }
 
 func DefaultDailyExperienceCurationPrompt() string {
-	return `Run daily experience_curation.
+	return `Run daily experience_curation. Synthesize recent completed work across sessions, then route durable patterns into the correct long-lived artifacts.
 
-Curate recent completed work into user memory first, then promote stable reusable conclusions into the correct long-lived artifacts, including user-side Markdown files, source-agent bootstrap files, shared knowledge, and shared skills.
+**Core Objective:**
+- **Synthesize:** Merge fragmented hourly/daily notes into coherent cross-session patterns.
+- **Route Equally:** Treat user memory, agent bootstrap files, shared knowledge, and shared skills as **equal destinations** based on content nature.
+- **Elevate & Prune:** Promote stable conclusions to knowledge, distinct workflows to skills, and durable context to memory files. Remove noise and duplicates.
 
-Primary goal:
-- Ensure user-facing work is captured in daily memory.
-- Promote durable user, agent, and project context into the correct user-side or source-agent Markdown files.
-- Promote only stable shared conclusions into knowledge.
-- Promote only distinct repeatable workflows into skills.
+**Scope & Input:**
+- Analyze recent sessions, daily logs (last 24h), and existing memory/knowledge/skill files.
+- Curate one source agent/user pair at a time.
+- All curated artifacts live under the user's '.evoduck' data directory.
+- File-tool paths are rooted at that global '.evoduck' data directory.
+- Do not write relative to the current workspace.
+- Do not prefix paths with 'data/' if file tools are already rooted at the '.evoduck' data directory.
+- For source-agent user-level and agent-level artifacts, use file tools with explicit paths.
+- Do not use memory_write or memory_edit for arbitrary source-agent artifacts because those tools route by the current curator agent namespace rather than the source-agent namespace.
+- Use memory_* tools only for the curator's own namespace when explicitly needed.
+- Always read existing target files before modifying them to consolidate.
 
-Scope:
-- Inspect recent work traces, relevant memories, existing user-side Markdown files, existing source-agent bootstrap files, existing knowledge, and existing skills.
-- Curate one source agent/user pair at a time. Use file tools rooted at the global data directory for source-agent user memory under users/<source_agent_id>_user_<user_id>/.
-- Do not use memory_write for source-agent memory because it writes the curator namespace.
-- Inspect existing relevant files before writing or creating anything.
+**Directory Layout:**
+- User-level artifacts live under 'users/<source_agent_id>_user_<user_id>/':
+  - 'USER.md'
+  - 'MEMORY.md'
+  - 'memory/YYYY-MM-DD.md'
+- Agent-level bootstrap artifacts live under 'agents/<source_agent_id>/':
+  - 'AGENTS.md'
+  - 'SOUL.md'
+  - 'TOOLS.md'
+  - 'IDENTITY.md'
+  - 'HEARTBEAT.md'
+  - 'BOOTSTRAP.md'
 
 User-side files and their roles:
-- memory/YYYY-MM-DD.md: same-day session notes, temporary context, research, testing, and continuity notes.
-- MEMORY.md: durable recurring context, stable facts, preferences, constraints, decisions, and project context that should outlive the day.
-- USER.md: confirmed user profile information and durable response preferences or boundaries.
+- 'memory/YYYY-MM-DD.md'
+- 'MEMORY.md'
+- 'USER.md'
 
 Source-agent bootstrap files and their roles:
-- AGENTS.md: durable source-agent operating rules, collaboration rules, persistence rules, and behavioral guidance.
-- SOUL.md: durable source-agent identity, name, role, mission, tone, and stable boundaries.
-- TOOLS.md: durable source-agent tool-use rules, tool preferences, and tool boundaries.
-- IDENTITY.md: structured durable source-agent identity details when that file already serves that role.
-- HEARTBEAT.md: durable source-agent maintenance cadence, self-check, or recurring operational commitments when that file already serves that role.
-- BOOTSTRAP.md: durable source-agent startup, initialization, or onboarding rules when that file already serves that role.
+- 'AGENTS.md'
+- 'SOUL.md'
+- 'TOOLS.md'
+- 'IDENTITY.md'
+- 'HEARTBEAT.md'
+- 'BOOTSTRAP.md'
 
 Shared artifacts:
-- Shared knowledge: stable reusable conclusions, runbooks, architecture notes, debugging notes, decision records, and research summaries useful beyond one user or one conversation.
-- Shared skills: distinct repeatable workflows with clear trigger conditions, steps, decisions, success criteria, and boundaries. Each skill is maintained through its SKILL.md entry file and must remain non-overlapping with existing skills.
+- Shared knowledge:
+- Shared skills:
+- 'SKILL.md'
 
-Rules:
-- Ensure recent ordinary user-facing sessions have daily memory coverage in memory/YYYY-MM-DD.md, including brief casual-chat notes when useful for continuity and not already captured.
-- Promote stable information into the correct user-side or source-agent file instead of forcing everything into MEMORY.md.
-- Update USER.md for confirmed user profile facts and durable response preferences.
-- Update AGENTS.md for durable operating rules that should shape future behavior of the source agent.
-- Update SOUL.md for durable agent identity or persona information.
-- Update TOOLS.md for durable tool-use rules.
-- Update IDENTITY.md, HEARTBEAT.md, or BOOTSTRAP.md only when the file already exists or the session clearly supports that specific file role; do not invent overlapping bootstrap structure without evidence.
-- Update MEMORY.md for durable continuity that is neither merely same-day context nor a structured USER.md or source-agent bootstrap field.
-- Search and read existing knowledge before writing; update an existing entry when it is the best home.
-- Inspect existing skills before writing; update a close existing skill instead of creating an overlapping one.
-- Use shared knowledge only for conclusions that are stable, supported, and reusable beyond one user or one day.
-- Use shared skills only for workflows that are distinct, repeatable, and well-bounded.
-- Prefer updating, consolidating, or rewriting existing artifacts over appending duplicates.
-- Replace superseded content instead of preserving conflicting old and new versions.
-- Skip low-confidence or duplicate artifacts, but do not skip daily memory solely because a session was casual or short.
-- Do not send user-facing messages.
+**File Roles & Routing Matrix (Equal Importance):**
 
-Decision guidance:
-- If the value is continuity for this user or this source agent, prefer user-side or source-agent files first.
-- If the value is broadly reusable across users or future tasks, consider shared knowledge or shared skills.
-- A reusable conclusion belongs in knowledge.
-- A reusable procedure belongs in a skill.
-- Agent identity belongs in SOUL.md or, when already structured that way, IDENTITY.md.
-- Agent operating rules belong in AGENTS.md.
-- Agent tool rules belong in TOOLS.md.
-- Agent recurring maintenance commitments belong in HEARTBEAT.md when that scope already exists.
-- Agent startup or initialization rules belong in BOOTSTRAP.md when that scope already exists.
-- User profile facts belong in USER.md.
-- Durable cross-day context belongs in MEMORY.md.
+| Target File | Boundary / Role | Trigger Condition |
+|-------------|----------------|-------------------|
+| 'users/<source_agent_id>_user_<user_id>/memory/YYYY-MM-DD.md' | Same-day notes, temporary context, research, testing, continuity. | Every meaningful session. Merge duplicates from hourly runs. |
+| 'users/<source_agent_id>_user_<user_id>/MEMORY.md' | Durable recurring context, stable facts, preferences, constraints, decisions, project context. | Cross-day patterns, confirmed user constraints, recurring project context. |
+| 'users/<source_agent_id>_user_<user_id>/USER.md' | Confirmed user profile, response preferences, durable boundaries. | Explicitly confirmed profile updates or style preferences. |
+| 'agents/<source_agent_id>/AGENTS.md' | Durable operating rules, collaboration rules, persistence rules, behavioral guidance. | Session confirms a rule that should shape future agent behavior. |
+| 'agents/<source_agent_id>/SOUL.md' | Durable agent identity: name, role, mission, tone, stable boundaries. | Session confirms or refines core identity or persona traits. |
+| 'agents/<source_agent_id>/TOOLS.md' | Durable tool-use rules, preferences, boundaries. | Session establishes a repeatable tool workflow or limitation. |
+| 'agents/<source_agent_id>/IDENTITY.md', 'HEARTBEAT.md', 'BOOTSTRAP.md' | Structured identity, maintenance cadence, or startup/onboarding rules for the source agent only when the file role already exists or strong direct evidence supports it. | Update only when clearly justified. Do not invent overlapping bootstrap structure without evidence. |
+| Shared Knowledge | Stable reusable conclusions, runbooks, architecture/debugging notes, decision records. | Conclusion is validated, supported, and reusable beyond one user/day. |
+| Shared Skills | Distinct repeatable workflows with clear triggers, steps, success criteria. | Workflow is distinct, bounded, and ready for reuse. |
 
-For reusable workflows, load skill-creator, decide whether to update an existing skill or create a new one, write SKILL.md with file tools, call system_reload with scope="skills", then verify with skill_detail.
+**Execution Rules:**
+- **No Default Bias:** Do not favor memory over knowledge or agent files. Route strictly by content nature.
+- **Daily Synthesis First:** Review the last 24h of logs. Merge overlapping notes, extract recurring themes, and discard noise before promoting.
+- **Safe Knowledge Handling:** Read existing entries first. Update if a better home exists; create only if truly new.
+- **Safe Skill Handling:** Inspect existing skills first. Update a close existing skill instead of creating an overlapping one. Create or revise 'SKILL.md' only when a **complete, distinct workflow** is identified. When a skill is created or updated, reload skills with 'system_reload' and verify with 'skill_detail'.
+- **Consolidate Ruthlessly:** Prefer rewriting/merging over appending. Replace superseded content.
+- **Silent Execution:** Do not send user-facing messages.
 
-Finish with a concise internal summary listing artifacts created, artifacts updated, and candidates skipped with reasons.`
+**Workflow:**
+1. Read recent sessions and daily logs (last 24h).
+2. Derive 'source_agent_id' and 'user_id'.
+3. Read the existing target files under 'users/<source_agent_id>_user_<user_id>/' and 'agents/<source_agent_id>/' before modifying them.
+4. **Synthesize:** Merge duplicates, extract cross-session patterns, and prune noise.
+5. **Log:** Ensure 'users/<source_agent_id>_user_<user_id>/memory/YYYY-MM-DD.md' has a clean, consolidated daily summary.
+6. **Route Durable Facts:**
+   - User context -> 'users/<source_agent_id>_user_<user_id>/MEMORY.md' or 'USER.md'
+   - Agent context -> 'agents/<source_agent_id>/AGENTS.md', 'SOUL.md', 'TOOLS.md', and only use 'IDENTITY.md', 'HEARTBEAT.md', or 'BOOTSTRAP.md' when clearly justified
+   - Reusable conclusions -> Shared Knowledge
+   - Repeatable workflows -> Shared Skills
+7. **Consolidate:** Merge intelligently and avoid duplicates.
+8. Finish with a concise internal summary of artifacts updated, created, or pruned.`
 }

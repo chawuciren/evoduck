@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -974,36 +975,156 @@ func (g *Gateway) executeCuratorSystemTask(schedule scheduler.ScheduleRecord, ta
 	if fromMeta := strings.TrimSpace(schedule.Metadata["task_kind"]); fromMeta != "" {
 		taskKind = fromMeta
 	}
+	targets := g.discoverSystemCurationTargets(taskKind)
 	logger.Info("Starting curator system task", logger.Fields{
-		"schedule_id":  schedule.ID,
-		"schedule":     schedule.Schedule,
-		"task_kind":    taskKind,
-		"session_key":  schedule.ExecutionSessionKey,
-		"prompt_chars": len(prompt),
+		"schedule_id":   schedule.ID,
+		"schedule":      schedule.Schedule,
+		"task_kind":     taskKind,
+		"session_key":   schedule.ExecutionSessionKey,
+		"prompt_chars":  len(prompt),
+		"target_groups": len(targets),
 	})
-	report, err := g.agentMgr.RunExperienceCuratorEphemeral(context.Background(), prompt, agent.EphemeralRunOptions{
-		Metadata: map[string]string{
-			"session_kind":  "schedule",
-			"memory_policy": "ignore",
-			"task_kind":     taskKind,
-		},
-	})
-	if err != nil {
-		logger.Error("Curator system task failed", logger.Fields{
+	if len(targets) == 0 {
+		logger.Info("Curator system task skipped: no source targets", logger.Fields{
 			"schedule_id": schedule.ID,
 			"task_kind":   taskKind,
-			"duration_ms": time.Since(startedAt).Milliseconds(),
-			"error":       err.Error(),
 		})
-		return err
+		return nil
+	}
+	for _, target := range targets {
+		report, err := g.agentMgr.RunSourceContextCurationEphemeral(context.Background(), target.SourceAgentID, target.TargetUserID, prompt, agent.SourceContextCurationOptions{
+			TaskKind: taskKind,
+			Sessions: target.Sessions,
+			Metadata: map[string]string{
+				"schedule_id":       schedule.ID,
+				"session_kind":      "schedule",
+				"memory_policy":     "ignore",
+				"task_kind":         taskKind,
+				"source_agent_id":   target.SourceAgentID,
+				"target_user_id":    target.TargetUserID,
+				"source_session_key": firstSessionKey(target.Sessions),
+			},
+		})
+		if err != nil {
+			logger.Error("Curator system task failed for target", logger.Fields{
+				"schedule_id":      schedule.ID,
+				"task_kind":        taskKind,
+				"source_agent_id":  target.SourceAgentID,
+				"target_user_id":   target.TargetUserID,
+				"source_sessions":  len(target.Sessions),
+				"duration_ms":      time.Since(startedAt).Milliseconds(),
+				"error":            err.Error(),
+			})
+			return err
+		}
+		logger.Info("Curator target run completed", logger.Fields{
+			"schedule_id":     schedule.ID,
+			"task_kind":       taskKind,
+			"source_agent_id": target.SourceAgentID,
+			"target_user_id":  target.TargetUserID,
+			"source_sessions": len(target.Sessions),
+			"report_chars":    len(strings.TrimSpace(report)),
+		})
 	}
 	logger.Info("Curator system task completed", logger.Fields{
 		"schedule_id":  schedule.ID,
 		"task_kind":    taskKind,
 		"duration_ms":  time.Since(startedAt).Milliseconds(),
-		"report_chars": len(strings.TrimSpace(report)),
+		"target_groups": len(targets),
 	})
 	return nil
+}
+
+type systemCurationTarget struct {
+	SourceAgentID string
+	TargetUserID  string
+	Sessions      []*session.Session
+}
+
+func (g *Gateway) discoverSystemCurationTargets(taskKind string) []systemCurationTarget {
+	if g.sessionMgr == nil {
+		return nil
+	}
+	cutoff := time.Now().Add(-curationTargetWindow(taskKind))
+	grouped := make(map[string]*systemCurationTarget)
+	for _, info := range g.sessionMgr.List() {
+		if !isCurationCandidate(info, cutoff) {
+			continue
+		}
+		sess, err := g.sessionMgr.Get(info.Key)
+		if err != nil || sess == nil {
+			continue
+		}
+		sourceAgentID := strings.TrimSpace(info.AgentID)
+		targetUserID := curationTargetUserID(sess)
+		if sourceAgentID == "" || targetUserID == "" {
+			continue
+		}
+		groupKey := sourceAgentID + "\x00" + targetUserID
+		target := grouped[groupKey]
+		if target == nil {
+			target = &systemCurationTarget{SourceAgentID: sourceAgentID, TargetUserID: targetUserID}
+			grouped[groupKey] = target
+		}
+		target.Sessions = append(target.Sessions, sess)
+	}
+	result := make([]systemCurationTarget, 0, len(grouped))
+	for _, target := range grouped {
+		sort.Slice(target.Sessions, func(i, j int) bool {
+			return target.Sessions[i].UpdatedAt.After(target.Sessions[j].UpdatedAt)
+		})
+		result = append(result, *target)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].SourceAgentID == result[j].SourceAgentID {
+			return result[i].TargetUserID < result[j].TargetUserID
+		}
+		return result[i].SourceAgentID < result[j].SourceAgentID
+	})
+	return result
+}
+
+func isCurationCandidate(info session.SessionInfo, cutoff time.Time) bool {
+	if strings.TrimSpace(info.AgentID) == "" || info.AgentID == agent.ExperienceCuratorID {
+		return false
+	}
+	if info.MessageCount == 0 || info.UpdatedAt.Before(cutoff) {
+		return false
+	}
+	if info.IsSchedule || info.IsMemoryIgnored {
+		return false
+	}
+	sessionKind := strings.TrimSpace(info.SessionKind)
+	if sessionKind == "" || strings.EqualFold(sessionKind, "normal") {
+		return true
+	}
+	return !(strings.EqualFold(sessionKind, "schedule") || strings.EqualFold(sessionKind, "system_task"))
+}
+
+func curationTargetWindow(taskKind string) time.Duration {
+	if strings.EqualFold(strings.TrimSpace(taskKind), "experience_curation") {
+		return 24 * time.Hour
+	}
+	return 2 * time.Hour
+}
+
+func curationTargetUserID(sess *session.Session) string {
+	if sess == nil {
+		return ""
+	}
+	if actor := strings.TrimSpace(sess.GetMetadataValue("actor_user_id")); actor != "" {
+		return actor
+	}
+	return strings.TrimSpace(sess.GetUserID())
+}
+
+func firstSessionKey(sessions []*session.Session) string {
+	for _, sess := range sessions {
+		if sess != nil && strings.TrimSpace(sess.Key) != "" {
+			return strings.TrimSpace(sess.Key)
+		}
+	}
+	return ""
 }
 
 func (g *Gateway) executeScheduledRun(schedule scheduler.ScheduleRecord) error {
@@ -1048,6 +1169,7 @@ func (g *Gateway) executeScheduledRun(schedule scheduler.ScheduleRecord) error {
 			ThinkingContent: event.ThinkingContent,
 			ToolID:          event.ToolID,
 			ToolName:        event.ToolName,
+			ToolParams:      event.ToolParams,
 			ToolResult:      event.ToolResult,
 			Iteration:       event.Iteration,
 			Plan:            event.Plan,
@@ -1248,6 +1370,7 @@ func (g *Gateway) RunSessionInput(ctx context.Context, agentID, sessionKey, inpu
 			ThinkingContent: event.ThinkingContent,
 			ToolID:          event.ToolID,
 			ToolName:        event.ToolName,
+			ToolParams:      event.ToolParams,
 			ToolResult:      event.ToolResult,
 			Iteration:       event.Iteration,
 			Plan:            event.Plan,

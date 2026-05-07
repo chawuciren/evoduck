@@ -431,3 +431,100 @@ func TestEmployeeToolOverrideRestrictsDefaultTools(t *testing.T) {
 		t.Fatal("expected file_write to be hidden by tool override")
 	}
 }
+
+func TestBuildSourceContextCurationPromptIncludesTargetArtifacts(t *testing.T) {
+	root := t.TempDir()
+	llmReg, err := llm.NewRegistry(config.LLMConfig{
+		DefaultProvider: "stub",
+		DefaultModel:    "stub-model",
+		Providers:       map[string]config.ProviderConfig{},
+	}, nil)
+	if err != nil {
+		t.Fatalf("new llm registry: %v", err)
+	}
+	if err := llmReg.RegisterDynamic("stub", &scheduleTestProvider{}); err != nil {
+		t.Fatalf("register provider: %v", err)
+	}
+
+	mgr := NewManager(llmReg, root, filepath.Join(root, "shared", "skills"), config.BackendCallConfig{}, config.SessionToolConfig{}, config.MemoryConfig{}, nil, nil, nil)
+	if err := mgr.Register("agent-test", config.AgentConfig{
+		Workspace: filepath.Join(root, "agents", "agent-test"),
+		Provider:  "stub",
+		Model:     "stub-model",
+		Role:      string(models.RoleAdmin),
+	}); err != nil {
+		t.Fatalf("register agent: %v", err)
+	}
+
+	userDir := filepath.Join(root, "users", "agent-test_user_alice")
+	memoryDir := filepath.Join(userDir, "memory")
+	if err := os.MkdirAll(memoryDir, 0o755); err != nil {
+		t.Fatalf("mkdir memory dir: %v", err)
+	}
+	agentDir := filepath.Join(root, "agents", "agent-test")
+	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+		t.Fatalf("mkdir agent dir: %v", err)
+	}
+	for path, content := range map[string]string{
+		filepath.Join(memoryDir, "2026-05-07.md"):        "recent daily note 1",
+		filepath.Join(memoryDir, "2026-05-08.md"):        "recent daily note 2",
+		filepath.Join(userDir, "USER.md"):               "preferred name: Alice",
+		filepath.Join(userDir, "MEMORY.md"):             "durable preference: concise replies",
+		filepath.Join(agentDir, "AGENTS.md"):            "agent rule: verify targets before writing",
+		filepath.Join(agentDir, "SOUL.md"):              "mission: keep memory tidy",
+		filepath.Join(agentDir, "TOOLS.md"):             "tool rule: prefer memory tools",
+		filepath.Join(agentDir, "IDENTITY.md"):          "identity note",
+		filepath.Join(agentDir, "HEARTBEAT.md"):         "heartbeat note",
+		filepath.Join(agentDir, "BOOTSTRAP.md"):         "bootstrap note",
+	} {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	sess := session.NewSession("agent:agent-test:user:alice:ws", "sess-1", nil)
+	sess.SetUserID("alice")
+	sess.SetMetadataValue("actor_user_id", "alice")
+	sess.UpdatedAt = time.Date(2026, 5, 8, 10, 30, 0, 0, time.UTC)
+	sess.Append(models.Message{Role: "user", Content: "Please remember I prefer short updates."})
+	sess.Append(models.Message{Role: "assistant", Content: "Understood."})
+
+	prompt, err := mgr.buildSourceContextCurationPrompt("agent-test", "alice", "base curation prompt", "experience_curation", []*session.Session{sess})
+	if err != nil {
+		t.Fatalf("buildSourceContextCurationPrompt: %v", err)
+	}
+
+	for _, want := range []string{
+		"base curation prompt",
+		"## Target Source Context",
+		"source_agent_id: agent-test",
+		"target_user_id: alice",
+		"task_kind: experience_curation",
+		"## Target source sessions",
+		"These sessions belong to the target source agent and target user being curated.",
+		"session_key: agent:agent-test:user:alice:ws",
+		"Please remember I prefer short updates.",
+		"## Target recent daily memory",
+		"recent daily note 2",
+		"## Target user USER.md",
+		"preferred name: Alice",
+		"## Target user MEMORY.md",
+		"durable preference: concise replies",
+		"## Target agent AGENTS.md",
+		"agent rule: verify targets before writing",
+		"## Target agent SOUL.md",
+		"mission: keep memory tidy",
+		"## Target agent TOOLS.md",
+		"tool rule: prefer memory tools",
+		"## Target agent IDENTITY.md",
+		"identity note",
+		"## Target agent HEARTBEAT.md",
+		"heartbeat note",
+		"## Target agent BOOTSTRAP.md",
+		"bootstrap note",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("expected prompt to contain %q\nfull prompt:\n%s", want, prompt)
+		}
+	}
+}
