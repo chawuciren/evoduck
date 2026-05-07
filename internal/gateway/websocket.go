@@ -1190,7 +1190,7 @@ func (g *Gateway) handleWSSettings(conn *websocket.Conn) {
 			Model:    llmModel,
 		},
 		System: SystemSettings{
-			Version: "1.0.0",
+			Version: currentRuntimeVersion(),
 			Uptime:  time.Since(g.startTime).String(),
 		},
 	}

@@ -35,10 +35,29 @@ import (
 	webassets "github.com/chawuciren/evoduck/web"
 )
 
+var runtimeVersion = "dev"
+
 func init() {
 	// Register channel factories at package init time
 	channels.RegisterFactory("weixin", newWeixinBridgeFactory)
 	channels.RegisterFactory("wecom", newWecomBridgeFactory)
+}
+
+func SetRuntimeVersion(version string) {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		runtimeVersion = "dev"
+		return
+	}
+	runtimeVersion = version
+}
+
+func currentRuntimeVersion() string {
+	version := strings.TrimSpace(runtimeVersion)
+	if version == "" {
+		return "dev"
+	}
+	return version
 }
 
 func newWeixinBridgeFactory(channelID string, cfg config.ChannelConfig, decider *proxy.Decider) (channels.Bridge, error) {
