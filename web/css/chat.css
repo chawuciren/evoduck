@@ -1237,6 +1237,97 @@
     padding-top: 8px;
 }
 
+.context-layer-breakdown {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.context-layer-bar {
+    display: flex;
+    width: 100%;
+    height: 6px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: rgba(5, 8, 22, 0.72);
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.context-layer-segment {
+    height: 100%;
+    min-width: 2px;
+}
+
+.context-layer-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.context-layer-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.context-layer-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    color: rgba(226, 232, 240, 0.88);
+}
+
+.context-layer-value {
+    color: rgba(203, 213, 225, 0.92);
+    white-space: nowrap;
+}
+
+.context-layer-share {
+    color: rgba(148, 163, 184, 0.72);
+}
+
+.context-layer-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    box-shadow: 0 0 8px rgba(86, 247, 177, 0.16);
+}
+
+.context-layer-summary {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    color: rgba(148, 163, 184, 0.72);
+    padding-top: 2px;
+}
+
+.layer-0 {
+    background: linear-gradient(90deg, #56f7b1 0%, #8affce 100%);
+}
+
+.layer-1 {
+    background: linear-gradient(90deg, #35d6ff 0%, #7be6ff 100%);
+}
+
+.layer-2 {
+    background: linear-gradient(90deg, #8b5cf6 0%, #b794ff 100%);
+}
+
+.layer-3 {
+    background: linear-gradient(90deg, #fbbf24 0%, #fde68a 100%);
+}
+
+.layer-4 {
+    background: linear-gradient(90deg, #fb7185 0%, #fda4af 100%);
+}
+
+.layer-5 {
+    background: linear-gradient(90deg, #94a3b8 0%, #cbd5e1 100%);
+}
+
 .compress-btn {
     width: 100%;
     padding: 10px 14px;

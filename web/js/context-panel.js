@@ -176,16 +176,8 @@ function renderContextStats(stats) {
     }
 
     var detailEl = document.getElementById('contextStatsDetail');
-    if (detailEl && stats.layers) {
-        var detailHtml = '';
-        stats.layers.forEach(function(layer) {
-            var tokens = getLayerTokenCount(layer);
-            var layerLabel = layer.display_name || layer.displayName || layer.name || 'unknown';
-            detailHtml += escapeHtml(layerLabel) + ': ' + formatTokenNumber(tokens) + ' tokens<br>';
-        });
-        detailHtml += '<span style="color:rgba(148,163,184,0.52)">remaining: ' + escapeHtml(formatTokenNumber(stats.remaining || 0)) + ' tokens</span><br>';
-        detailHtml += '<span style="color:rgba(148,163,184,0.52)">hint: ' + escapeHtml(contextHintText(stats.status)) + '</span>';
-        detailEl.innerHTML = detailHtml;
+    if (detailEl) {
+        detailEl.innerHTML = renderContextLayerBreakdown(stats);
     }
 
     var oldInfo = document.getElementById('rpContextInfo');
@@ -198,15 +190,46 @@ function renderContextStats(stats) {
             + '<span style="color:rgba(148,163,184,0.35);">Remaining</span><br>'
             + '<span style="color:#CBD5E1;font-family:Consolas,monospace;">' + formatTokenNumber(stats.remaining || 0) + '</span>'
             + '</div>'
-            + '<div style="margin-bottom:8px;">'
+            + '<div>'
             + '<span style="color:rgba(148,163,184,0.35);">Hint</span><br>'
             + '<span style="color:#94A3B8;font-size:12px;">' + escapeHtml(contextHintText(stats.status)) + '</span>'
-            + '</div>'
-            + '<div>'
-            + '<span style="color:rgba(148,163,184,0.35);">Tokens</span><br>'
-            + '<span style="color:#CBD5E1;font-family:Consolas,monospace;">' + formatTokenNumber(stats.used_tokens) + ' / ' + formatTokenNumber(stats.max_tokens) + '</span>'
             + '</div>';
     }
+}
+
+function renderContextLayerBreakdown(stats) {
+    var layers = Array.isArray(stats.layers) ? stats.layers : [];
+    var usedTokens = Number(stats.used_tokens) || 0;
+    var rowsHtml = '';
+    var segmentsHtml = '';
+
+    layers.forEach(function(layer, index) {
+        var tokens = getLayerTokenCount(layer);
+        if (tokens <= 0) return;
+        var layerLabel = layer.display_name || layer.displayName || layer.name || 'unknown';
+        var share = usedTokens > 0 ? (tokens / usedTokens * 100) : 0;
+        var colorClass = 'layer-' + (index % 6);
+        segmentsHtml += '<span class="context-layer-segment ' + colorClass + '" style="width:' + share.toFixed(2) + '%"></span>';
+        rowsHtml += '<div class="context-layer-row">'
+            + '<span class="context-layer-label"><span class="context-layer-dot ' + colorClass + '"></span>' + escapeHtml(layerLabel) + '</span>'
+            + '<span class="context-layer-value">' + escapeHtml(formatTokenNumber(tokens)) + ' <span class="context-layer-share">(' + share.toFixed(1) + '%)</span></span>'
+            + '</div>';
+    });
+
+    var summaryHtml = '<div class="context-layer-summary">'
+        + '<span>remaining: ' + escapeHtml(formatTokenNumber(stats.remaining || 0)) + ' tokens</span>'
+        + '<span>hint: ' + escapeHtml(contextHintText(stats.status)) + '</span>'
+        + '</div>';
+
+    if (!rowsHtml) {
+        return summaryHtml;
+    }
+
+    return '<div class="context-layer-breakdown">'
+        + '<div class="context-layer-bar">' + segmentsHtml + '</div>'
+        + '<div class="context-layer-list">' + rowsHtml + '</div>'
+        + summaryHtml
+        + '</div>';
 }
 
 function contextHintText(status) {

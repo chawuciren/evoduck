@@ -1347,18 +1347,17 @@ func (r *Runtime) GetContextStats(sess *session.Session) *ContextStats {
 		maxTokens = r.compactor.maxTokens
 	}
 
-	totalTokens := estimateSessionTokens(sess)
-	layers := []LayerStats{{
-		Name:         "session",
-		DisplayName:  "Session History",
-		SizeChars:    totalTokens * 3,
-		EstTokens:    totalTokens,
-		IsCompressed: false,
-		Priority:     30,
-	}}
+	layers := estimateSessionLayers(sess)
+	totalTokens := 0
+	for _, layer := range layers {
+		totalTokens += layer.EstTokens
+	}
 
 	remaining := maxTokens - totalTokens
-	usagePercent := float64(totalTokens) / float64(maxTokens) * 100
+	usagePercent := 0.0
+	if maxTokens > 0 {
+		usagePercent = float64(totalTokens) / float64(maxTokens) * 100
+	}
 
 	// 计算阈值
 	threshold := 20000 // 默认大 context 阈值
@@ -1384,9 +1383,61 @@ func (r *Runtime) GetContextStats(sess *session.Session) *ContextStats {
 		Layers:       layers,
 	}
 }
-func estimateSessionTokens(sess *session.Session) int {
+
+func estimateSessionLayers(sess *session.Session) []LayerStats {
 	if sess == nil {
-		return 0
+		return nil
 	}
-	return estimateMessagesTokens(sess.GetMessages())
+	var userTokens, assistantTokens, toolTokens, thinkingTokens, toolCallTokens, mediaTokens, overheadTokens int
+	for _, m := range sess.GetMessages() {
+		overheadTokens += 10
+		mediaTokens += estimateMessageMediaTokens(m.Media)
+		thinkingTokens += estimateTextTokens(m.ThinkingContent)
+		switch m.Role {
+		case "user":
+			userTokens += estimateTextTokens(m.Content)
+		case "assistant":
+			assistantTokens += estimateTextTokens(m.Content)
+		case "tool":
+			toolTokens += estimateTextTokens(m.Content)
+		default:
+			assistantTokens += estimateTextTokens(m.Content)
+		}
+		for _, tc := range m.ToolCalls {
+			toolCallTokens += estimateTextTokens(tc.Function.Name) + estimateTextTokens(tc.Function.Arguments) + 30
+		}
+	}
+	layers := make([]LayerStats, 0, 7)
+	appendLayer := func(name, displayName string, tokens int, priority int) {
+		if tokens <= 0 {
+			return
+		}
+		layers = append(layers, LayerStats{
+			Name:         name,
+			DisplayName:  displayName,
+			SizeChars:    tokens * 3,
+			EstTokens:    tokens,
+			IsCompressed: false,
+			Priority:     priority,
+		})
+	}
+	appendLayer("user_messages", "User Messages", userTokens, 10)
+	appendLayer("assistant_messages", "Assistant Messages", assistantTokens, 20)
+	appendLayer("tool_results", "Tool Results", toolTokens, 30)
+	appendLayer("thinking", "Thinking", thinkingTokens, 35)
+	appendLayer("tool_calls", "Tool Calls", toolCallTokens, 40)
+	appendLayer("media", "Media", mediaTokens, 45)
+	appendLayer("message_overhead", "Message Overhead", overheadTokens, 50)
+	if len(layers) == 0 {
+		return []LayerStats{{
+			Name:         "session",
+			DisplayName:  "Session History",
+			SizeChars:    0,
+			EstTokens:    0,
+			IsCompressed: false,
+			Priority:     30,
+		}}
+	}
+	return layers
 }
+
