@@ -227,6 +227,163 @@ function updateSettingsMapStringArray(path, key, field, rawValue) {
     touchSettingsDraft();
 }
 
+function parseSettingsStringArray(rawValue) {
+    return String(rawValue || '').split(',').map(function(item) {
+        return item.trim();
+    }).filter(function(item) {
+        return item.length > 0;
+    });
+}
+
+function ensureSettingsMapNestedObject(path, key, nestedKey) {
+    var section = getSettingsByPath(settingsDraft, path);
+    if (!section || !section[key]) return null;
+    if (!section[key][nestedKey] || typeof section[key][nestedKey] !== 'object' || Array.isArray(section[key][nestedKey])) {
+        section[key][nestedKey] = {};
+    }
+    return section[key][nestedKey];
+}
+
+function ensureSettingsMapNestedArray(path, key, nestedKey) {
+    var section = getSettingsByPath(settingsDraft, path);
+    if (!section || !section[key]) return null;
+    if (!Array.isArray(section[key][nestedKey])) {
+        section[key][nestedKey] = [];
+    }
+    return section[key][nestedKey];
+}
+
+function updateSettingsMapNestedStringArray(path, key, nestedKey, field, rawValue) {
+    var target = ensureSettingsMapNestedObject(path, key, nestedKey);
+    if (!target) return;
+    target[field] = parseSettingsStringArray(rawValue);
+    touchSettingsDraft();
+}
+
+function updateSettingsMapNestedBoolean(path, key, nestedKey, field, value) {
+    var target = ensureSettingsMapNestedObject(path, key, nestedKey);
+    if (!target) return;
+    target[field] = !!value;
+    touchSettingsDraft();
+}
+
+function addSettingsMapNestedArrayItem(path, key, nestedKey, templateFactory) {
+    var target = ensureSettingsMapNestedArray(path, key, nestedKey);
+    if (!target) return;
+    target.push(templateFactory ? templateFactory() : {});
+    touchSettingsDraft();
+    renderSettings();
+}
+
+function removeSettingsMapNestedArrayItem(path, key, nestedKey, index) {
+    var target = ensureSettingsMapNestedArray(path, key, nestedKey);
+    if (!target || index < 0 || index >= target.length) return;
+    target.splice(index, 1);
+    touchSettingsDraft();
+    renderSettings();
+}
+
+function updateSettingsMapNestedArrayItem(path, key, nestedKey, index, field, value, fieldType) {
+    var target = ensureSettingsMapNestedArray(path, key, nestedKey);
+    if (!target || index < 0 || index >= target.length) return;
+    if (!target[index] || typeof target[index] !== 'object') {
+        target[index] = {};
+    }
+    var nextValue = value;
+    if (fieldType === 'number') {
+        nextValue = value === '' ? 0 : Number(value);
+    } else if (fieldType === 'boolean') {
+        nextValue = !!value;
+    }
+    target[index][field] = nextValue;
+    touchSettingsDraft();
+}
+
+function updateSettingsMapNestedArrayNestedItem(path, key, nestedKey, index, childKey, field, value, fieldType) {
+    var target = ensureSettingsMapNestedArray(path, key, nestedKey);
+    if (!target || index < 0 || index >= target.length) return;
+    if (!target[index] || typeof target[index] !== 'object') {
+        target[index] = {};
+    }
+    if (!target[index][childKey] || typeof target[index][childKey] !== 'object' || Array.isArray(target[index][childKey])) {
+        target[index][childKey] = {};
+    }
+    var nextValue = value;
+    if (fieldType === 'number') {
+        nextValue = value === '' ? 0 : Number(value);
+    } else if (fieldType === 'boolean') {
+        nextValue = !!value;
+    }
+    target[index][childKey][field] = nextValue;
+    touchSettingsDraft();
+}
+
+function updateSettingsFieldStringArray(path, rawValue) {
+    setSettingsByPath(settingsDraft, path, parseSettingsStringArray(rawValue));
+    touchSettingsDraft();
+}
+
+function ensureSettingsObjectPath(path) {
+    var value = getSettingsByPath(settingsDraft, path);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        value = {};
+        setSettingsByPath(settingsDraft, path, value);
+    }
+    return value;
+}
+
+function updateSettingsOptionalBooleanMap(path, key, rawValue) {
+    var target = ensureSettingsObjectPath(path);
+    if (rawValue === 'inherit') {
+        delete target[key];
+    } else {
+        target[key] = rawValue === 'true';
+    }
+    touchSettingsDraft();
+}
+
+function addSettingsObjectMapEntry(path, templateFactory) {
+    var name = window.prompt('Entry name');
+    if (!name) return;
+    name = name.trim();
+    if (!name) return;
+    var target = ensureSettingsObjectPath(path);
+    if (Object.prototype.hasOwnProperty.call(target, name)) {
+        setSettingsStatus('Entry already exists: ' + name, 'error');
+        return;
+    }
+    target[name] = templateFactory ? templateFactory(name) : null;
+    touchSettingsDraft();
+    renderSettings();
+}
+
+function removeSettingsObjectMapEntry(path, key) {
+    var target = ensureSettingsObjectPath(path);
+    delete target[key];
+    touchSettingsDraft();
+    renderSettings();
+}
+
+function renderSettingsOptionalBooleanMapRows(mapValue, onChangeCall, onRemoveCall, emptyText) {
+    var entries = Object.keys(mapValue || {}).sort();
+    if (!entries.length) {
+        return '<div class="settings-empty-inline">' + escapeHtml(emptyText || 'No entries') + '</div>';
+    }
+    return entries.map(function(entryKey) {
+        var entryValue = mapValue[entryKey];
+        var normalized = entryValue === true ? 'true' : entryValue === false ? 'false' : 'inherit';
+        return '<div class="settings-kv-row">'
+            + '<input type="text" class="settings-input settings-kv-key" value="' + escapeHtml(entryKey) + '" disabled>'
+            + '<select class="settings-input settings-kv-value" onchange="' + onChangeCall.replace(/__KEY__/g, escapeJs(entryKey)) + '(this.value)">'
+            + '<option value="inherit"' + (normalized === 'inherit' ? ' selected' : '') + '>inherit</option>'
+            + '<option value="true"' + (normalized === 'true' ? ' selected' : '') + '>enabled</option>'
+            + '<option value="false"' + (normalized === 'false' ? ' selected' : '') + '>disabled</option>'
+            + '</select>'
+            + '<button type="button" class="session-btn session-btn-danger settings-inline-btn" onclick="' + onRemoveCall.replace(/__KEY__/g, escapeJs(entryKey)) + '">Remove</button>'
+            + '</div>';
+    }).join('');
+}
+
 function getSettingsAgentNames() {
     return Object.keys((settingsDraft && settingsDraft.agents) || {}).sort();
 }
@@ -341,6 +498,7 @@ function renderAgentsEditor(field, value) {
     var names = Object.keys(agents).sort();
     var cards = names.map(function(name) {
         var agent = agents[name] || {};
+        var permissions = agent.permissions || {};
         return '<div class="settings-complex-card">'
             + '<div class="settings-complex-card-header">'
             + '<div><div class="settings-complex-title">' + escapeHtml(name) + '</div><div class="settings-field-path">agents.' + escapeHtml(name) + '</div></div>'
@@ -351,24 +509,31 @@ function renderAgentsEditor(field, value) {
             + '<label class="settings-stack-field"><span class="settings-inline-label">Workspace</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(agent.workspace || '') + '" oninput="updateSettingsMapString(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'workspace\', this.value)"></label>'
             + '<label class="settings-stack-field"><span class="settings-inline-label">Provider</span>' + renderSettingsSelect(providerNames, agent.provider || '', 'updateSettingsMapString(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'provider\', this.value)', 'Use default provider') + '</label>'
             + '<label class="settings-stack-field"><span class="settings-inline-label">Model</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(agent.model || '') + '" oninput="updateSettingsMapString(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'model\', this.value)"></label>'
-            + '<label class="settings-stack-field"><span class="settings-inline-label">Channels</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml((agent.channels || []).join(', ')) + '" oninput="updateSettingsMapStringArray(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'channels\', this.value)" placeholder="wechat, telegram"></label>'
             + '<label class="settings-stack-field"><span class="settings-inline-label">Temperature</span><input type="number" step="0.1" class="settings-input settings-input-wide" value="' + escapeHtml(agent.temperature === undefined || agent.temperature === null ? '' : String(agent.temperature)) + '" oninput="updateSettingsMapNumber(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'temperature\', this.value)"></label>'
             + '<label class="settings-stack-field"><span class="settings-inline-label">Max tokens</span><input type="number" class="settings-input settings-input-wide" value="' + escapeHtml(agent.max_tokens === undefined || agent.max_tokens === null ? '' : String(agent.max_tokens)) + '" oninput="updateSettingsMapNumber(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'max_tokens\', this.value)"></label>'
             + '<label class="settings-stack-field"><span class="settings-inline-label">Top-p</span><input type="number" step="0.1" class="settings-input settings-input-wide" value="' + escapeHtml(agent.top_p === undefined || agent.top_p === null ? '' : String(agent.top_p)) + '" oninput="updateSettingsMapNumber(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'top_p\', this.value)"></label>'
             + '<label class="settings-stack-field"><span class="settings-inline-label">Max iterations</span><input type="number" class="settings-input settings-input-wide" value="' + escapeHtml(agent.max_iterations === undefined || agent.max_iterations === null ? '' : String(agent.max_iterations)) + '" oninput="updateSettingsMapNumber(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'max_iterations\', this.value)"></label>'
             + '</div>'
             + '<div class="settings-subsection">'
+            + '<div class="settings-subsection-title">Permissions</div>'
+            + '<div class="settings-complex-grid">'
+            + '<label class="settings-stack-field settings-stack-field-span"><span class="settings-inline-label">Authorized directories</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml((permissions.authorized_directories || []).join(', ')) + '" oninput="updateSettingsMapNestedStringArray(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'permissions\', \'authorized_directories\', this.value)" placeholder="/workspace/a, /workspace/b"></label>'
+            + '<label class="settings-stack-field settings-stack-field-span"><span class="settings-inline-label">Authorized tools</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml((permissions.authorized_tools || []).join(', ')) + '" oninput="updateSettingsMapNestedStringArray(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'permissions\', \'authorized_tools\', this.value)" placeholder="Read, Edit, Bash"></label>'
+            + '<label class="settings-stack-field settings-stack-field-span"><span class="settings-inline-label">Authorized subagents</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml((permissions.authorized_subagents || []).join(', ')) + '" oninput="updateSettingsMapNestedStringArray(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'permissions\', \'authorized_subagents\', this.value)" placeholder="Plan, Explore"></label>'
+            + '<label class="settings-stack-field settings-stack-field-span"><span class="settings-inline-label">Authorized external subagents</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml((permissions.authorized_external_subagents || []).join(', ')) + '" oninput="updateSettingsMapNestedStringArray(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'permissions\', \'authorized_external_subagents\', this.value)"></label>'
+            + '</div>'
+            + '</div>'
+            + '<div class="settings-subsection">'
             + '<div class="settings-subsection-title">User isolation</div>'
             + '<div class="settings-inline-toggle-group">'
-            + '<label class="settings-toggle"><input type="checkbox" ' + (agent.user_isolation && agent.user_isolation.enabled ? 'checked' : '') + ' onchange="updateSettingsNestedMapString(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'user_isolation\', \'enabled\', this.checked)"><span>Enabled</span></label>'
-            + '<label class="settings-toggle"><input type="checkbox" ' + (agent.user_isolation && agent.user_isolation.auto_create ? 'checked' : '') + ' onchange="updateSettingsNestedMapString(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'user_isolation\', \'auto_create\', this.checked)"><span>Auto create</span></label>'
-            + '<label class="settings-toggle"><input type="checkbox" ' + (agent.user_isolation && agent.user_isolation.auto_profile ? 'checked' : '') + ' onchange="updateSettingsNestedMapString(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'user_isolation\', \'auto_profile\', this.checked)"><span>Auto profile</span></label>'
+            + '<label class="settings-toggle"><input type="checkbox" ' + (agent.user_isolation && agent.user_isolation.auto_create ? 'checked' : '') + ' onchange="updateSettingsMapNestedBoolean(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'user_isolation\', \'auto_create\', this.checked)"><span>Auto create</span></label>'
+            + '<label class="settings-toggle"><input type="checkbox" ' + (agent.user_isolation && agent.user_isolation.auto_profile ? 'checked' : '') + ' onchange="updateSettingsMapNestedBoolean(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'user_isolation\', \'auto_profile\', this.checked)"><span>Auto profile</span></label>'
             + '</div>'
             + '</div>'
             + '</div>';
     }).join('');
     return '<div class="settings-complex-editor">'
-        + '<div class="settings-complex-toolbar"><button type="button" class="session-btn settings-inline-btn" onclick="addSettingsMapEntry(\'' + escapeJs(field.path) + '\', function(){ return { role: \'customer\', workspace: \'\', provider: \'\', model: \'\', channels: [], user_isolation: { enabled: false, auto_create: false, auto_profile: false }, temperature: 0, max_tokens: 0, top_p: 0, max_iterations: 0 }; })">Add agent</button></div>'
+        + '<div class="settings-complex-toolbar"><button type="button" class="session-btn settings-inline-btn" onclick="addSettingsMapEntry(\'' + escapeJs(field.path) + '\', function(){ return { role: \'customer\', workspace: \'\', permissions: { authorized_directories: [], authorized_tools: [], authorized_subagents: [], authorized_external_subagents: [] }, provider: \'\', model: \'\', user_isolation: { auto_create: true, auto_profile: true }, temperature: 0, max_tokens: 0, top_p: 0, max_iterations: 0 }; })">Add agent</button></div>'
         + (cards || '<div class="settings-empty-inline">No agents configured.</div>')
         + '</div>';
 }
@@ -405,6 +570,7 @@ function providerSortWeight(provider) {
 }
 
 function renderProviderCard(field, name, provider) {
+    var models = Array.isArray(provider.models) ? provider.models : [];
     return '<div class="settings-complex-card">'
         + '<div class="settings-complex-card-header">'
         + '<div><div class="settings-complex-title">' + escapeHtml(name) + '</div><div class="settings-field-path">llm.providers.' + escapeHtml(name) + '</div></div>'
@@ -413,8 +579,32 @@ function renderProviderCard(field, name, provider) {
         + '<div class="settings-complex-grid">'
         + '<label class="settings-stack-field"><span class="settings-inline-label">Type</span>' + renderSettingsSelect(['openai', 'openai-compatible', 'openai-responses-compatible', 'anthropic', 'anthropic-compatible', 'gemini', 'gemini-compatible', 'deepseek', 'minimax', 'ollama', 'lmstudio', 'vllm', 'litellm'], provider.type || '', 'updateSettingsMapString(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'type\', this.value)', 'Select type') + '</label>'
         + '<label class="settings-stack-field"><span class="settings-inline-label">Base URL</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(provider.base_url || '') + '" oninput="updateSettingsMapString(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'base_url\', this.value)"></label>'
-        + '<label class="settings-stack-field"><span class="settings-inline-label">Model</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(provider.model || '') + '" oninput="updateSettingsMapString(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'model\', this.value)"></label>'
+        + '<label class="settings-stack-field"><span class="settings-inline-label">Default model</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(provider.default_model || '') + '" oninput="updateSettingsMapString(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'default_model\', this.value)"></label>'
         + '<label class="settings-stack-field"><span class="settings-inline-label">API Key</span>' + renderSettingsSecretInput(provider.api_key || '', 'updateSettingsMapString(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'api_key\', this.value)') + '</label>'
+        + '</div>'
+        + '<div class="settings-subsection">'
+        + '<div class="settings-subsection-header"><div class="settings-subsection-title">Models</div><button type="button" class="session-btn settings-inline-btn" onclick="addSettingsMapNestedArrayItem(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'models\', function(){ return { id: \'\', name: \'\', type: \'chat\', capabilities: { vision: false, reasoning: false, tool_use: false }, context_window: 0, max_output_tokens: 0 }; })">Add model</button></div>'
+        + (models.length ? models.map(function(model, index) {
+            var capabilities = model.capabilities || {};
+            return '<div class="settings-complex-card settings-complex-card-nested">'
+                + '<div class="settings-complex-card-header">'
+                + '<div><div class="settings-complex-title">' + escapeHtml(model.id || ('Model ' + (index + 1))) + '</div><div class="settings-field-path">llm.providers.' + escapeHtml(name) + '.models[' + index + ']</div></div>'
+                + '<button type="button" class="session-btn session-btn-danger settings-inline-btn" onclick="removeSettingsMapNestedArrayItem(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'models\', ' + index + ')">Remove</button>'
+                + '</div>'
+                + '<div class="settings-complex-grid">'
+                + '<label class="settings-stack-field"><span class="settings-inline-label">ID</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(model.id || '') + '" oninput="updateSettingsMapNestedArrayItem(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'models\', ' + index + ', \'id\', this.value)"></label>'
+                + '<label class="settings-stack-field"><span class="settings-inline-label">Name</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(model.name || '') + '" oninput="updateSettingsMapNestedArrayItem(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'models\', ' + index + ', \'name\', this.value)"></label>'
+                + '<label class="settings-stack-field"><span class="settings-inline-label">Type</span>' + renderSettingsSelect(['chat', 'embedding', 'rerank'], model.type || '', 'updateSettingsMapNestedArrayItem(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'models\', ' + index + ', \'type\', this.value)', 'Select type') + '</label>'
+                + '<label class="settings-stack-field"><span class="settings-inline-label">Context window</span><input type="number" class="settings-input settings-input-wide" value="' + escapeHtml(model.context_window === undefined || model.context_window === null ? '' : String(model.context_window)) + '" oninput="updateSettingsMapNestedArrayItem(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'models\', ' + index + ', \'context_window\', this.value, \'number\')"></label>'
+                + '<label class="settings-stack-field"><span class="settings-inline-label">Max output tokens</span><input type="number" class="settings-input settings-input-wide" value="' + escapeHtml(model.max_output_tokens === undefined || model.max_output_tokens === null ? '' : String(model.max_output_tokens)) + '" oninput="updateSettingsMapNestedArrayItem(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'models\', ' + index + ', \'max_output_tokens\', this.value, \'number\')"></label>'
+                + '</div>'
+                + '<div class="settings-inline-toggle-group">'
+                + '<label class="settings-toggle"><input type="checkbox" ' + (capabilities.vision ? 'checked' : '') + ' onchange="updateSettingsMapNestedArrayNestedItem(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'models\', ' + index + ', \'capabilities\', \'vision\', this.checked, \'boolean\')"><span>Vision</span></label>'
+                + '<label class="settings-toggle"><input type="checkbox" ' + (capabilities.reasoning ? 'checked' : '') + ' onchange="updateSettingsMapNestedArrayNestedItem(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'models\', ' + index + ', \'capabilities\', \'reasoning\', this.checked, \'boolean\')"><span>Reasoning</span></label>'
+                + '<label class="settings-toggle"><input type="checkbox" ' + (capabilities.tool_use ? 'checked' : '') + ' onchange="updateSettingsMapNestedArrayNestedItem(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'models\', ' + index + ', \'capabilities\', \'tool_use\', this.checked, \'boolean\')"><span>Tool use</span></label>'
+                + '</div>'
+                + '</div>';
+        }).join('') : '<div class="settings-empty-inline">No provider models configured.</div>')
         + '</div>'
         + '</div>';
 }
@@ -441,7 +631,7 @@ function renderProvidersEditor(field, value) {
             + '</div>';
     }).join('');
     return '<div class="settings-complex-editor">'
-        + '<div class="settings-complex-toolbar"><button type="button" class="session-btn settings-inline-btn" onclick="addSettingsMapEntry(\'' + escapeJs(field.path) + '\', function(){ return { type: \'openai-compatible\', base_url: \'\', api_key: \'\', model: \'\' }; })">Add Provider</button></div>'
+        + '<div class="settings-complex-toolbar"><button type="button" class="session-btn settings-inline-btn" onclick="addSettingsMapEntry(\'' + escapeJs(field.path) + '\', function(){ return { type: \'openai-compatible\', base_url: \'\', api_key: \'\', headers: {}, default_model: \'\', models: [] }; })">Add Provider</button></div>'
         + (sections || '<div class="settings-empty-inline">No providers configured.</div>')
         + '</div>';
 }
@@ -452,31 +642,34 @@ function renderChannelsEditor(field, value) {
     var names = Object.keys(channels).sort();
     var cards = names.map(function(name) {
         var channel = channels[name] || {};
+        var type = channel.type || '';
+        var subtypeFields = '';
+        if (type === 'weixin') {
+            subtypeFields = ''
+                + '<label class="settings-stack-field"><span class="settings-inline-label">Token</span>' + renderSettingsSecretInput(channel.token || '', 'updateSettingsMapString(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'token\', this.value)') + '</label>'
+                + '<label class="settings-stack-field"><span class="settings-inline-label">User ID</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(channel.user_id || '') + '" oninput="updateSettingsMapString(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'user_id\', this.value)"></label>'
+                + '<label class="settings-stack-field settings-stack-field-span"><span class="settings-inline-label">API base URL</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(channel.api_base_url || '') + '" oninput="updateSettingsMapString(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'api_base_url\', this.value)"></label>';
+        } else if (type === 'wecom') {
+            subtypeFields = ''
+                + '<label class="settings-stack-field"><span class="settings-inline-label">Bot ID</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(channel.bot_id || '') + '" oninput="updateSettingsMapString(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'bot_id\', this.value)"></label>'
+                + '<label class="settings-stack-field"><span class="settings-inline-label">Secret</span>' + renderSettingsSecretInput(channel.secret || '', 'updateSettingsMapString(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'secret\', this.value)') + '</label>';
+        }
         return '<div class="settings-complex-card">'
             + '<div class="settings-complex-card-header">'
             + '<div><div class="settings-complex-title">' + escapeHtml(name) + '</div><div class="settings-field-path">channels.' + escapeHtml(name) + '</div></div>'
             + '<button type="button" class="session-btn session-btn-danger settings-inline-btn" onclick="removeSettingsSectionEntry(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\')">Remove</button>'
             + '</div>'
             + '<div class="settings-complex-grid">'
-            + '<label class="settings-stack-field"><span class="settings-inline-label">Type</span>' + renderSettingsSelect(['webchat', 'weixin', 'wecom'], channel.type || '', 'updateSettingsMapString(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'type\', this.value)', 'Select type') + '</label>'
+            + '<label class="settings-stack-field"><span class="settings-inline-label">Type</span>' + renderSettingsSelect(['webchat', 'weixin', 'wecom'], type, 'updateSettingsMapString(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'type\', this.value); renderSettings()', 'Select type') + '</label>'
             + '<label class="settings-stack-field"><span class="settings-inline-label">Name</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(channel.name || '') + '" oninput="updateSettingsMapString(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'name\', this.value)"></label>'
             + '<label class="settings-stack-field"><span class="settings-inline-label">Role</span>' + renderSettingsSelect(['admin', 'employee', 'customer'], channel.role || '', 'updateSettingsMapString(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'role\', this.value)', 'Select role') + '</label>'
             + '<label class="settings-stack-field"><span class="settings-inline-label">Agent</span>' + renderSettingsSelect(agentNames, channel.agent || '', 'updateSettingsMapString(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'agent\', this.value)', 'Select agent') + '</label>'
-            + '<label class="settings-stack-field"><span class="settings-inline-label">Token</span>' + renderSettingsSecretInput(channel.token || '', 'updateSettingsMapString(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'token\', this.value)') + '</label>'
-            + '<label class="settings-stack-field"><span class="settings-inline-label">User ID</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(channel.user_id || '') + '" oninput="updateSettingsMapString(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'user_id\', this.value)"></label>'
-            + '<label class="settings-stack-field"><span class="settings-inline-label">Corp ID</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(channel.corp_id || '') + '" oninput="updateSettingsMapString(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'corp_id\', this.value)"></label>'
-            + '<label class="settings-stack-field"><span class="settings-inline-label">Corp Secret</span>' + renderSettingsSecretInput(channel.corp_secret || '', 'updateSettingsMapString(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'corp_secret\', this.value)') + '</label>'
-            + '<label class="settings-stack-field"><span class="settings-inline-label">Agent ID</span><input type="number" class="settings-input settings-input-wide" value="' + escapeHtml(channel.agent_id === undefined || channel.agent_id === null ? '' : String(channel.agent_id)) + '" oninput="updateSettingsMapNumber(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'agent_id\', this.value)"></label>'
-            + '<label class="settings-stack-field"><span class="settings-inline-label">Encoding AES Key</span>' + renderSettingsSecretInput(channel.encoding_aes_key || '', 'updateSettingsMapString(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'encoding_aes_key\', this.value)') + '</label>'
-            + '<label class="settings-stack-field settings-stack-field-span"><span class="settings-inline-label">API base URL</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(channel.api_base_url || '') + '" oninput="updateSettingsMapString(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'api_base_url\', this.value)"></label>'
-            + '<label class="settings-stack-field settings-stack-field-span"><span class="settings-inline-label">Callback path</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(channel.callback_path || '') + '" oninput="updateSettingsMapString(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'callback_path\', this.value)" placeholder="/wecom/agent"></label>'
-            + '<label class="settings-stack-field settings-stack-field-span"><span class="settings-inline-label">Receive ID</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(channel.receive_id || '') + '" oninput="updateSettingsMapString(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'receive_id\', this.value)"></label>'
-            + '<label class="settings-stack-field settings-stack-field-span"><span class="settings-inline-label">Allowed users</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml((channel.allowed_users || []).join(', ')) + '" oninput="updateSettingsMapStringArray(\'' + escapeJs(field.path) + '\', \'' + escapeJs(name) + '\', \'allowed_users\', this.value)" placeholder="alice, bob"></label>'
+            + subtypeFields
             + '</div>'
             + '</div>';
     }).join('');
     return '<div class="settings-complex-editor">'
-        + '<div class="settings-complex-toolbar"><button type="button" class="session-btn settings-inline-btn" onclick="addSettingsMapEntry(\'' + escapeJs(field.path) + '\', function(){ return { type: \'webchat\', name: \'\', role: \'customer\', agent: \'\', token: \'\', user_id: \'\', corp_id: \'\', corp_secret: \'\', agent_id: 0, encoding_aes_key: \'\', api_base_url: \'\', callback_path: \'\', receive_id: \'\', allowed_users: [] }; })">Add channel</button></div>'
+        + '<div class="settings-complex-toolbar"><button type="button" class="session-btn settings-inline-btn" onclick="addSettingsMapEntry(\'' + escapeJs(field.path) + '\', function(){ return { type: \'webchat\', name: \'\', role: \'customer\', agent: \'\', token: \'\', user_id: \'\', api_base_url: \'\', bot_id: \'\', secret: \'\' }; })">Add channel</button></div>'
         + (cards || '<div class="settings-empty-inline">No channels configured.</div>')
         + '</div>';
 }
@@ -552,8 +745,6 @@ function renderMCPServersEditor(field, value) {
 
 function renderMemoryEditor(field, value) {
     var memory = value || {};
-    var extract = memory.extract || {};
-    var cleanup = memory.cleanup || {};
     var shortTerm = memory.short_term || {};
     var mediumTerm = memory.medium_term || {};
     var longTerm = memory.long_term || {};
@@ -564,27 +755,6 @@ function renderMemoryEditor(field, value) {
     var coreMemory = memory.core_memory || {};
     var bootstrap = memory.bootstrap || {};
     return '<div class="settings-complex-editor">'
-        + '<div class="settings-subsection">'
-        + '<div class="settings-subsection-title">Extract</div>'
-        + '<div class="settings-complex-grid">'
-        + '<label class="settings-toggle"><input type="checkbox" ' + (extract.enabled ? 'checked' : '') + ' onchange="updateSettingsField(\'memory.extract.enabled\', this.checked, \'boolean\')"><span>Enabled</span></label>'
-        + '<label class="settings-toggle"><input type="checkbox" ' + (extract.enable_llm_gating ? 'checked' : '') + ' onchange="updateSettingsField(\'memory.extract.enable_llm_gating\', this.checked, \'boolean\')"><span>LLM gating</span></label>'
-        + '<label class="settings-stack-field"><span class="settings-inline-label">Interval</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(extract.interval || '') + '" oninput="updateSettingsField(\'memory.extract.interval\', this.value, \'text\')" placeholder="1h"></label>'
-        + '<label class="settings-stack-field"><span class="settings-inline-label">Medium lookback days</span><input type="number" class="settings-input settings-input-wide" value="' + escapeHtml(extract.medium_lookback_days === undefined || extract.medium_lookback_days === null ? '' : String(extract.medium_lookback_days)) + '" oninput="updateSettingsField(\'memory.extract.medium_lookback_days\', this.value, \'number\')"></label>'
-        + '<label class="settings-stack-field"><span class="settings-inline-label">Min medium chars</span><input type="number" class="settings-input settings-input-wide" value="' + escapeHtml(extract.min_medium_chars === undefined || extract.min_medium_chars === null ? '' : String(extract.min_medium_chars)) + '" oninput="updateSettingsField(\'memory.extract.min_medium_chars\', this.value, \'number\')"></label>'
-        + '</div>'
-        + '</div>'
-        + '<div class="settings-subsection">'
-        + '<div class="settings-subsection-title">Cleanup</div>'
-        + '<div class="settings-complex-grid">'
-        + '<label class="settings-toggle"><input type="checkbox" ' + (cleanup.enabled ? 'checked' : '') + ' onchange="updateSettingsField(\'memory.cleanup.enabled\', this.checked, \'boolean\')"><span>Enabled</span></label>'
-        + '<label class="settings-toggle"><input type="checkbox" ' + (cleanup.cleanup_user_longterm ? 'checked' : '') + ' onchange="updateSettingsField(\'memory.cleanup.cleanup_user_longterm\', this.checked, \'boolean\')"><span>Cleanup user longterm</span></label>'
-        + '<label class="settings-toggle"><input type="checkbox" ' + (cleanup.cleanup_agent_longterm ? 'checked' : '') + ' onchange="updateSettingsField(\'memory.cleanup.cleanup_agent_longterm\', this.checked, \'boolean\')"><span>Cleanup agent longterm</span></label>'
-        + '<label class="settings-stack-field"><span class="settings-inline-label">Schedule</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(cleanup.schedule || '') + '" oninput="updateSettingsField(\'memory.cleanup.schedule\', this.value, \'text\')" placeholder="0 3 * * *"></label>'
-        + '<label class="settings-stack-field"><span class="settings-inline-label">Medium days window</span><input type="number" class="settings-input settings-input-wide" value="' + escapeHtml(cleanup.medium_days_window === undefined || cleanup.medium_days_window === null ? '' : String(cleanup.medium_days_window)) + '" oninput="updateSettingsField(\'memory.cleanup.medium_days_window\', this.value, \'number\')"></label>'
-        + '<label class="settings-stack-field"><span class="settings-inline-label">Min chars to cleanup</span><input type="number" class="settings-input settings-input-wide" value="' + escapeHtml(cleanup.min_chars_to_cleanup === undefined || cleanup.min_chars_to_cleanup === null ? '' : String(cleanup.min_chars_to_cleanup)) + '" oninput="updateSettingsField(\'memory.cleanup.min_chars_to_cleanup\', this.value, \'number\')"></label>'
-        + '</div>'
-        + '</div>'
         + '<div class="settings-subsection">'
         + '<div class="settings-subsection-title">Short Term</div>'
         + '<div class="settings-complex-grid">'
@@ -668,38 +838,103 @@ function renderMemoryEditor(field, value) {
 
 function renderProxyEditor(field, value) {
     var proxy = value || {};
-    var subprocesses = proxy.subprocesses || {};
+    var http = proxy.http || {};
+    var socks5 = proxy.socks5 || {};
+    var controls = proxy.controls || {};
+    var llm = controls.llm || {};
+    var channels = controls.channels || {};
+    var tools = controls.tools || {};
+    var mcp = controls.mcp || {};
+    var plugin = controls.plugin || {};
+    var exec = controls.exec || {};
+    var subagents = controls.subagents || {};
+    var internalSubagents = subagents.internal || {};
+    var externalSubagents = subagents.external || {};
     return '<div class="settings-complex-editor">'
         + '<div class="settings-complex-grid">'
         + '<label class="settings-toggle"><input type="checkbox" ' + (proxy.enabled ? 'checked' : '') + ' onchange="updateSettingsField(\'proxy.enabled\', this.checked, \'boolean\')"><span>Enabled</span></label>'
+        + '<label class="settings-stack-field"><span class="settings-inline-label">Default type</span>' + renderSettingsSelect(['http', 'socks5'], proxy.type || '', 'updateSettingsField(\'proxy.type\', this.value, \'text\')', 'Select type') + '</label>'
+        + '<label class="settings-stack-field settings-stack-field-span"><span class="settings-inline-label">No proxy</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml((proxy.no_proxy || []).join(', ')) + '" oninput="updateSettingsFieldStringArray(\'proxy.no_proxy\', this.value)" placeholder="localhost, internal.example.com"></label>'
         + '</div>'
         + '<div class="settings-subsection">'
-        + '<div class="settings-subsection-title">Proxy URLs</div>'
+        + '<div class="settings-subsection-title">HTTP</div>'
         + '<div class="settings-complex-grid">'
-        + '<label class="settings-stack-field"><span class="settings-inline-label">HTTP Proxy</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(proxy.http_proxy || '') + '" oninput="updateSettingsField(\'proxy.http_proxy\', this.value, \'text\')" placeholder="http://127.0.0.1:7897"></label>'
-        + '<label class="settings-stack-field"><span class="settings-inline-label">HTTPS Proxy</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(proxy.https_proxy || '') + '" oninput="updateSettingsField(\'proxy.https_proxy\', this.value, \'text\')" placeholder="http://127.0.0.1:7897"></label>'
-        + '<label class="settings-stack-field"><span class="settings-inline-label">SOCKS Proxy</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(proxy.socks_proxy || '') + '" oninput="updateSettingsField(\'proxy.socks_proxy\', this.value, \'text\')" placeholder="socks5://127.0.0.1:1080"></label>'
+        + '<label class="settings-stack-field settings-stack-field-span"><span class="settings-inline-label">URL</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(http.url || '') + '" oninput="updateSettingsField(\'proxy.http.url\', this.value, \'text\')"></label>'
+        + '<label class="settings-stack-field"><span class="settings-inline-label">Username</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(http.username || '') + '" oninput="updateSettingsField(\'proxy.http.username\', this.value, \'text\')"></label>'
+        + '<label class="settings-stack-field"><span class="settings-inline-label">Password</span>' + renderSettingsSecretInput(http.password || '', 'updateSettingsField(\'proxy.http.password\', this.value, \'text\')') + '</label>'
         + '</div>'
         + '</div>'
         + '<div class="settings-subsection">'
-        + '<div class="settings-subsection-title">Authentication</div>'
+        + '<div class="settings-subsection-title">SOCKS5</div>'
         + '<div class="settings-complex-grid">'
-        + '<label class="settings-stack-field"><span class="settings-inline-label">Username</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(proxy.username || '') + '" oninput="updateSettingsField(\'proxy.username\', this.value, \'text\')"></label>'
-        + '<label class="settings-stack-field"><span class="settings-inline-label">Password</span>' + renderSettingsSecretInput(proxy.password || '', 'updateSettingsField(\'proxy.password\', this.value, \'text\')') + '</label>'
+        + '<label class="settings-stack-field settings-stack-field-span"><span class="settings-inline-label">URL</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(socks5.url || '') + '" oninput="updateSettingsField(\'proxy.socks5.url\', this.value, \'text\')"></label>'
+        + '<label class="settings-stack-field"><span class="settings-inline-label">Username</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(socks5.username || '') + '" oninput="updateSettingsField(\'proxy.socks5.username\', this.value, \'text\')"></label>'
+        + '<label class="settings-stack-field"><span class="settings-inline-label">Password</span>' + renderSettingsSecretInput(socks5.password || '', 'updateSettingsField(\'proxy.socks5.password\', this.value, \'text\')') + '</label>'
         + '</div>'
         + '</div>'
         + '<div class="settings-subsection">'
-        + '<div class="settings-subsection-title">No Proxy (Bypass List)</div>'
+        + '<div class="settings-subsection-title">Controls · LLM</div>'
         + '<div class="settings-complex-grid">'
-        + '<label class="settings-stack-field settings-stack-field-span"><span class="settings-inline-label">Domains</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml((proxy.no_proxy || []).join(', ')) + '" oninput="updateSettingsField(\'proxy.no_proxy\', this.value.split(\',\').map(function(item){ return item.trim(); }).filter(function(item){ return item.length > 0; }), \'text\')" placeholder="localhost, internal.example.com"></label>'
+        + '<label class="settings-toggle"><input type="checkbox" ' + (llm.enabled ? 'checked' : '') + ' onchange="updateSettingsField(\'proxy.controls.llm.enabled\', this.checked, \'boolean\')"><span>Enabled</span></label>'
+        + '<label class="settings-stack-field"><span class="settings-inline-label">Type</span>' + renderSettingsSelect(['http', 'socks5'], llm.type || '', 'updateSettingsField(\'proxy.controls.llm.type\', this.value, \'text\')', 'Use default type') + '</label>'
         + '</div>'
+        + '<div class="settings-subsection-header"><div class="settings-subsection-title">Provider overrides</div><button type="button" class="session-btn settings-inline-btn" onclick="addSettingsObjectMapEntry(\'proxy.controls.llm.providers\', function(){ return true; })">Add override</button></div>'
+        + renderSettingsOptionalBooleanMapRows(llm.providers || {}, 'updateSettingsOptionalBooleanMap(\'proxy.controls.llm.providers\', \'__KEY__\'', 'removeSettingsObjectMapEntry(\'proxy.controls.llm.providers\', \'__KEY__\')', 'No provider overrides configured.')
         + '</div>'
         + '<div class="settings-subsection">'
-        + '<div class="settings-subsection-title">Subprocesses</div>'
-        + '<div class="settings-inline-toggle-group">'
-        + '<label class="settings-toggle"><input type="checkbox" ' + (subprocesses.mcp ? 'checked' : '') + ' onchange="updateSettingsField(\'proxy.subprocesses.mcp\', this.checked, \'boolean\')"><span>MCP inherits proxy</span></label>'
-        + '<label class="settings-toggle"><input type="checkbox" ' + (subprocesses.plugin ? 'checked' : '') + ' onchange="updateSettingsField(\'proxy.subprocesses.plugin\', this.checked, \'boolean\')"><span>Plugin inherits proxy</span></label>'
+        + '<div class="settings-subsection-title">Controls · Channels</div>'
+        + '<div class="settings-complex-grid">'
+        + '<label class="settings-toggle"><input type="checkbox" ' + (channels.default ? 'checked' : '') + ' onchange="updateSettingsField(\'proxy.controls.channels.default\', this.checked, \'boolean\')"><span>Default enabled</span></label>'
+        + '<label class="settings-stack-field"><span class="settings-inline-label">Type</span>' + renderSettingsSelect(['http', 'socks5'], channels.type || '', 'updateSettingsField(\'proxy.controls.channels.type\', this.value, \'text\')', 'Use default type') + '</label>'
         + '</div>'
+        + '<div class="settings-subsection-header"><div class="settings-subsection-title">Per channel</div><button type="button" class="session-btn settings-inline-btn" onclick="addSettingsObjectMapEntry(\'proxy.controls.channels.per_channel\', function(){ return true; })">Add channel</button></div>'
+        + renderSettingsOptionalBooleanMapRows(channels.per_channel || {}, 'updateSettingsOptionalBooleanMap(\'proxy.controls.channels.per_channel\', \'__KEY__\'', 'removeSettingsObjectMapEntry(\'proxy.controls.channels.per_channel\', \'__KEY__\')', 'No per-channel overrides configured.')
+        + '</div>'
+        + '<div class="settings-subsection">'
+        + '<div class="settings-subsection-title">Controls · Tools</div>'
+        + '<div class="settings-complex-grid">'
+        + '<label class="settings-toggle"><input type="checkbox" ' + (tools.enabled ? 'checked' : '') + ' onchange="updateSettingsField(\'proxy.controls.tools.enabled\', this.checked, \'boolean\')"><span>Enabled</span></label>'
+        + '<label class="settings-stack-field"><span class="settings-inline-label">Type</span>' + renderSettingsSelect(['http', 'socks5'], tools.type || '', 'updateSettingsField(\'proxy.controls.tools.type\', this.value, \'text\')', 'Use default type') + '</label>'
+        + '</div>'
+        + '<div class="settings-subsection-header"><div class="settings-subsection-title">Per tool</div><button type="button" class="session-btn settings-inline-btn" onclick="addSettingsObjectMapEntry(\'proxy.controls.tools.per_tool\', function(){ return true; })">Add tool</button></div>'
+        + renderSettingsOptionalBooleanMapRows(tools.per_tool || {}, 'updateSettingsOptionalBooleanMap(\'proxy.controls.tools.per_tool\', \'__KEY__\'', 'removeSettingsObjectMapEntry(\'proxy.controls.tools.per_tool\', \'__KEY__\')', 'No per-tool overrides configured.')
+        + '</div>'
+        + '<div class="settings-subsection">'
+        + '<div class="settings-subsection-title">Controls · MCP</div>'
+        + '<div class="settings-complex-grid">'
+        + '<label class="settings-toggle"><input type="checkbox" ' + (mcp.enabled ? 'checked' : '') + ' onchange="updateSettingsField(\'proxy.controls.mcp.enabled\', this.checked, \'boolean\')"><span>Enabled</span></label>'
+        + '<label class="settings-stack-field"><span class="settings-inline-label">Type</span>' + renderSettingsSelect(['http', 'socks5'], mcp.type || '', 'updateSettingsField(\'proxy.controls.mcp.type\', this.value, \'text\')', 'Use default type') + '</label>'
+        + '</div>'
+        + '<div class="settings-subsection-header"><div class="settings-subsection-title">Per server</div><button type="button" class="session-btn settings-inline-btn" onclick="addSettingsObjectMapEntry(\'proxy.controls.mcp.per_server\', function(){ return true; })">Add server</button></div>'
+        + renderSettingsOptionalBooleanMapRows(mcp.per_server || {}, 'updateSettingsOptionalBooleanMap(\'proxy.controls.mcp.per_server\', \'__KEY__\'', 'removeSettingsObjectMapEntry(\'proxy.controls.mcp.per_server\', \'__KEY__\')', 'No per-server overrides configured.')
+        + '</div>'
+        + '<div class="settings-subsection">'
+        + '<div class="settings-subsection-title">Controls · Plugin</div>'
+        + '<div class="settings-complex-grid">'
+        + '<label class="settings-toggle"><input type="checkbox" ' + (plugin.enabled ? 'checked' : '') + ' onchange="updateSettingsField(\'proxy.controls.plugin.enabled\', this.checked, \'boolean\')"><span>Enabled</span></label>'
+        + '<label class="settings-stack-field"><span class="settings-inline-label">Type</span>' + renderSettingsSelect(['http', 'socks5'], plugin.type || '', 'updateSettingsField(\'proxy.controls.plugin.type\', this.value, \'text\')', 'Use default type') + '</label>'
+        + '</div>'
+        + '<div class="settings-subsection-header"><div class="settings-subsection-title">Per plugin</div><button type="button" class="session-btn settings-inline-btn" onclick="addSettingsObjectMapEntry(\'proxy.controls.plugin.per_plugin\', function(){ return true; })">Add plugin</button></div>'
+        + renderSettingsOptionalBooleanMapRows(plugin.per_plugin || {}, 'updateSettingsOptionalBooleanMap(\'proxy.controls.plugin.per_plugin\', \'__KEY__\'', 'removeSettingsObjectMapEntry(\'proxy.controls.plugin.per_plugin\', \'__KEY__\')', 'No per-plugin overrides configured.')
+        + '</div>'
+        + '<div class="settings-subsection">'
+        + '<div class="settings-subsection-title">Controls · Exec</div>'
+        + '<div class="settings-complex-grid">'
+        + '<label class="settings-toggle"><input type="checkbox" ' + (exec.enabled ? 'checked' : '') + ' onchange="updateSettingsField(\'proxy.controls.exec.enabled\', this.checked, \'boolean\')"><span>Enabled</span></label>'
+        + '<label class="settings-stack-field"><span class="settings-inline-label">Type</span>' + renderSettingsSelect(['http', 'socks5'], exec.type || '', 'updateSettingsField(\'proxy.controls.exec.type\', this.value, \'text\')', 'Use default type') + '</label>'
+        + '</div>'
+        + '<div class="settings-subsection-header"><div class="settings-subsection-title">Per command</div><button type="button" class="session-btn settings-inline-btn" onclick="addSettingsObjectMapEntry(\'proxy.controls.exec.per_command\', function(){ return true; })">Add command</button></div>'
+        + renderSettingsOptionalBooleanMapRows(exec.per_command || {}, 'updateSettingsOptionalBooleanMap(\'proxy.controls.exec.per_command\', \'__KEY__\'', 'removeSettingsObjectMapEntry(\'proxy.controls.exec.per_command\', \'__KEY__\')', 'No per-command overrides configured.')
+        + '</div>'
+        + '<div class="settings-subsection">'
+        + '<div class="settings-subsection-title">Controls · Subagents</div>'
+        + '<div class="settings-complex-grid">'
+        + '<label class="settings-toggle"><input type="checkbox" ' + (internalSubagents.enabled ? 'checked' : '') + ' onchange="updateSettingsField(\'proxy.controls.subagents.internal.enabled\', this.checked, \'boolean\')"><span>Internal enabled</span></label>'
+        + '<label class="settings-toggle"><input type="checkbox" ' + (externalSubagents.enabled ? 'checked' : '') + ' onchange="updateSettingsField(\'proxy.controls.subagents.external.enabled\', this.checked, \'boolean\')"><span>External enabled</span></label>'
+        + '<label class="settings-stack-field"><span class="settings-inline-label">External type</span>' + renderSettingsSelect(['http', 'socks5'], externalSubagents.type || '', 'updateSettingsField(\'proxy.controls.subagents.external.type\', this.value, \'text\')', 'Use default type') + '</label>'
+        + '</div>'
+        + '<div class="settings-subsection-header"><div class="settings-subsection-title">Per external agent</div><button type="button" class="session-btn settings-inline-btn" onclick="addSettingsObjectMapEntry(\'proxy.controls.subagents.external.per_agent\', function(){ return true; })">Add agent</button></div>'
+        + renderSettingsOptionalBooleanMapRows(externalSubagents.per_agent || {}, 'updateSettingsOptionalBooleanMap(\'proxy.controls.subagents.external.per_agent\', \'__KEY__\'', 'removeSettingsObjectMapEntry(\'proxy.controls.subagents.external.per_agent\', \'__KEY__\')', 'No per-agent overrides configured.')
         + '</div>'
         + '</div>';
 }
@@ -718,22 +953,22 @@ function renderHeartbeatEditor(field, value) {
 function renderSchedulerEditor(field, value) {
     var scheduler = value || {};
     var systemTasks = scheduler.system_tasks || {};
-    var memoryExtract = systemTasks.memory_extract || {};
-    var memoryCleanup = systemTasks.memory_cleanup || {};
+    var memoryCuration = systemTasks.memory_curation || {};
+    var experienceCuration = systemTasks.experience_curation || {};
     return '<div class="settings-complex-editor">'
         + '<div class="schedule-helper-row settings-subsection-helper">'
         + '<div class="schedule-helper-text">System tasks use standard 5-field cron expressions and are hot-applied by the runtime.</div>'
         + '</div>'
         + '<div class="settings-subsection">'
-        + '<div class="settings-subsection-title">Memory Extract</div>'
+        + '<div class="settings-subsection-title">Memory curation</div>'
         + '<div class="settings-complex-grid">'
-        + '<label class="settings-stack-field settings-stack-field-span"><span class="settings-inline-label">Schedule</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(memoryExtract.schedule || '') + '" oninput="updateSettingsField(\'scheduler.system_tasks.memory_extract.schedule\', this.value, \'text\')" placeholder="0 * * * *"></label>'
+        + '<label class="settings-stack-field settings-stack-field-span"><span class="settings-inline-label">Schedule</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(memoryCuration.schedule || '') + '" oninput="updateSettingsField(\'scheduler.system_tasks.memory_curation.schedule\', this.value, \'text\')" placeholder="0 * * * *"></label>'
         + '</div>'
         + '</div>'
         + '<div class="settings-subsection">'
-        + '<div class="settings-subsection-title">Memory Cleanup</div>'
+        + '<div class="settings-subsection-title">Experience curation</div>'
         + '<div class="settings-complex-grid">'
-        + '<label class="settings-stack-field settings-stack-field-span"><span class="settings-inline-label">Schedule</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(memoryCleanup.schedule || '') + '" oninput="updateSettingsField(\'scheduler.system_tasks.memory_cleanup.schedule\', this.value, \'text\')" placeholder="0 3 * * *"></label>'
+        + '<label class="settings-stack-field settings-stack-field-span"><span class="settings-inline-label">Schedule</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(experienceCuration.schedule || '') + '" oninput="updateSettingsField(\'scheduler.system_tasks.experience_curation.schedule\', this.value, \'text\')" placeholder="0 3 * * *"></label>'
         + '</div>'
         + '</div>'
         + '</div>';

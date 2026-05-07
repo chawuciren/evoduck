@@ -95,13 +95,13 @@ func settingsSchema() []SettingsSectionSchema {
 		{
 			ID:          "memory",
 			Label:       "Memory",
-			Description: "Extraction, cleanup, and storage behavior",
+			Description: "Short-term, medium-term, long-term, core, and bootstrap memory settings",
 			Fields: []SettingsFieldSchema{{Path: "memory", Label: "Memory", Type: "object", Section: "memory"}},
 		},
 		{
 			ID:          "scheduler",
 			Label:       "Scheduler",
-			Description: "System task schedules and legacy heartbeat",
+			Description: "Heartbeat plus system task schedules for memory and experience curation",
 			Fields: []SettingsFieldSchema{
 				{Path: "heartbeat", Label: "Heartbeat", Type: "object", Section: "scheduler", RestartRequired: true},
 				{Path: "scheduler", Label: "Scheduler", Type: "object", Section: "scheduler"},
