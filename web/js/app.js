@@ -85,13 +85,21 @@ document.addEventListener('DOMContentLoaded', function() {
     updateComposerVisionState();
     updateSidebarVersion();
 
-    // Init duck ASCII art animation
-    if (window.DuckAnimator && window.DUCK_TEMPLATES && window.EVODUCK_ASCII) {
-        window._duckAnimator = new DuckAnimator('duckArt', 'evoduckAscii');
-        window._duckAnimator.loadTemplate('idle');
-        window._duckAnimator.start();
-    }
+    initDuckAnimation();
 });
+
+function initDuckAnimation() {
+    if (!window.DuckAnimator || !window.DUCK_ANIMATION) {
+        return;
+    }
+
+    try {
+        window._duckAnimator = new DuckAnimator('duckArt', 'evoduckAscii', window.DUCK_ANIMATION);
+        window._duckAnimator.start();
+    } catch (error) {
+        console.error('Duck animation init failed:', error);
+    }
+}
 
 function loadGatewayToken() {
     try {
