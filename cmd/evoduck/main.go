@@ -507,7 +507,7 @@ func runGateway() error {
 }
 
 func buildGatewayRuntime() (*gateway.Gateway, *plugin.Manager, *config.Config, error) {
-	if _, err := maybeRunFirstTimeSetup(); err != nil {
+	if err := ensureStartupConfigReady(); err != nil {
 		return nil, nil, nil, err
 	}
 
@@ -847,6 +847,10 @@ func autostartInstall() error {
 }
 
 func daemonStart() error {
+	if err := ensureStartupConfigReady(); err != nil {
+		return err
+	}
+
 	execPath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("get executable path: %w", err)
@@ -1217,6 +1221,11 @@ func channelReconnect(channelID string) error {
 
 func daemonRestartForUpdate() error {
 	return daemonRestart()
+}
+
+func ensureStartupConfigReady() error {
+	_, err := maybeRunFirstTimeSetup()
+	return err
 }
 
 func maybeRunFirstTimeSetup() (bool, error) {
