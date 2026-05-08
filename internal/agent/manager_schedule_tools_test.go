@@ -497,6 +497,9 @@ func TestBuildSourceContextCurationPromptIncludesTargetArtifacts(t *testing.T) {
 	for _, want := range []string{
 		"base curation prompt",
 		"## Target Source Context",
+		"Prefer memory_search, memory_read, memory_write, and memory_edit for target user memory and source-agent bootstrap updates in this run.",
+		"Use file tools only as a fallback when a memory tool cannot express the required change.",
+		"configured workspace and authorized directories",
 		"source_agent_id: agent-test",
 		"target_user_id: alice",
 		"task_kind: experience_curation",

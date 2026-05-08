@@ -87,8 +87,8 @@ func TestPreCompactPromptWarnsAgainstCuratorMemoryWrite(t *testing.T) {
 	sess.SetMetadataValue("agent_id", "source")
 	prompt := buildPreCompactCurationPrompt(sess, []models.Message{{Role: "user", Content: "remember this"}})
 	for _, want := range []string{
-		"not with memory_write",
-		"users/<source_agent_id>_user_<target_user_id>/",
+		"Prefer memory_search, memory_read, memory_write, and memory_edit",
+		"Use file tools only as a fallback",
 		"target_user_id: alice",
 		"source_agent_id: source",
 	} {

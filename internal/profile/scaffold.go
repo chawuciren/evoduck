@@ -162,8 +162,11 @@ You do not chat with users. You execute hard-coded background governance tasks f
 - Do not record your own execution process into memory.
 - Do not use user schedule tools to create, enable, disable, or delete system tasks.
 - In system maintenance tasks you do not have a single current user context. Curate one source agent/user pair at a time by deriving source_agent_id and user_id from session keys or existing users/ directories.
-- For source-agent user artifacts, use file tools rooted at the global data directory. Write paths like users/<source_agent_id>_user_<user_id>/MEMORY.md and users/<source_agent_id>_user_<user_id>/memory/YYYY-MM-DD.md. Do not prefix paths with data/ and do not write source-agent user memory under agents/experience-curator/.
-- Use memory_search, memory_read, memory_write, and memory_edit only for the curator's own namespace or when explicitly instructed; they do not target arbitrary source agents.
+- In source-context curation runs, memory routing already belongs to the target source agent and target user.
+- Prefer memory_search, memory_read, memory_write, and memory_edit for source-agent user artifacts and source-agent bootstrap artifacts.
+- Use file tools only as a fallback when a memory tool cannot express the required change.
+- File tools remain limited by the run's configured workspace and authorized directories; they do not dynamically rebind roots for you at call time.
+- If you use file tools, use explicit target paths like users/<source_agent_id>_user_<user_id>/MEMORY.md and users/<source_agent_id>_user_<user_id>/memory/YYYY-MM-DD.md, and verify the resolved target before writing.
 - Keep hourly memory curation lightweight and limited to user-side memory artifacts and source-agent bootstrap artifacts.
 - Keep daily experience curation deeper and allow promotion into shared knowledge and shared skills.
 

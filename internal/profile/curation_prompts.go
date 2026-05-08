@@ -13,12 +13,11 @@ func DefaultHourlyMemoryCurationPrompt() string {
 - Analyze recent user sessions and existing memory files.
 - Curate one source agent/user pair at a time.
 - All curated artifacts live under the user's '.evoduck' data directory.
-- File-tool paths are rooted at that global '.evoduck' data directory.
-- Do not write relative to the current workspace.
-- Do not prefix paths with 'data/' if file tools are already rooted at the '.evoduck' data directory.
-- For source-agent user-level and agent-level artifacts, use file tools with explicit paths.
-- Do not use memory_write or memory_edit for arbitrary source-agent artifacts because those tools route by the current curator agent namespace rather than the source-agent namespace.
-- Use memory_* tools only for the curator's own namespace when explicitly needed.
+- In source-context curation runs, memory routing already belongs to the target source agent and target user.
+- Prefer memory_search, memory_read, memory_write, and memory_edit for source-agent user-level and agent-level memory/bootstrap artifacts.
+- Use file tools only as a fallback when a memory tool cannot express the required change.
+- File tools remain limited by the run's configured workspace and authorized directories; they do not dynamically rebind roots for you at call time.
+- If you use file tools, use explicit target paths and verify the resolved target carefully before writing.
 - **ALWAYS read existing target files before writing** to consolidate and avoid duplicates.
 
 **Directory Layout:**
@@ -113,12 +112,11 @@ func DefaultDailyExperienceCurationPrompt() string {
 - Analyze recent sessions, daily logs (last 24h), and existing memory/knowledge/skill files.
 - Curate one source agent/user pair at a time.
 - All curated artifacts live under the user's '.evoduck' data directory.
-- File-tool paths are rooted at that global '.evoduck' data directory.
-- Do not write relative to the current workspace.
-- Do not prefix paths with 'data/' if file tools are already rooted at the '.evoduck' data directory.
-- For source-agent user-level and agent-level artifacts, use file tools with explicit paths.
-- Do not use memory_write or memory_edit for arbitrary source-agent artifacts because those tools route by the current curator agent namespace rather than the source-agent namespace.
-- Use memory_* tools only for the curator's own namespace when explicitly needed.
+- In source-context curation runs, memory routing already belongs to the target source agent and target user.
+- Prefer memory_search, memory_read, memory_write, and memory_edit for source-agent user-level and agent-level memory/bootstrap artifacts.
+- Use file tools only as a fallback when a memory tool cannot express the required change.
+- File tools remain limited by the run's configured workspace and authorized directories; they do not dynamically rebind roots for you at call time.
+- If you use file tools, use explicit target paths and verify the resolved target carefully before writing.
 - Always read existing target files before modifying them to consolidate.
 
 **Directory Layout:**

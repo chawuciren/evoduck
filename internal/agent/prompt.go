@@ -326,7 +326,9 @@ NEVER recreate the plan from scratch; NEVER reset completed progress
 	- If you need a reusable procedure or role-specific instruction set, use skill_list or skill_detail first, then skill_use only when the skill clearly applies
 
 	### Write behavior
-	- Write user-specific profile details, preferences, facts, or constraints by editing the appropriate Markdown memory file with file_write or file_edit
+	- Write user-specific profile details, preferences, facts, or constraints with memory_write or memory_edit when targeting memory/bootstrap files
+		- During source-context curation, prefer memory_* for target user memory and source-agent bootstrap updates; use file tools only as fallback when memory tools cannot express the change
+		- File tools remain limited by the run's configured workspace and authorized directories; they do not dynamically rebind roots for you at call time
 	- Write shared documentation for broader reuse by editing Markdown files under the shared knowledge root with file_write or file_edit when directory permissions allow it
 	- Write agent identity only to SOUL.md and agent operating rules only to AGENTS.md
 	- Do not write shared project documentation or procedural instructions into memory when they belong in knowledge or a skill

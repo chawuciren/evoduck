@@ -30,6 +30,15 @@ func TestDefaultHourlyMemoryCurationPromptIncludesArtifactRules(t *testing.T) {
 	if strings.Contains(prompt, "Shared artifacts:") {
 		t.Fatal("expected hourly prompt not to advertise shared artifact section")
 	}
+	for _, needle := range []string{
+		"Prefer memory_search, memory_read, memory_write, and memory_edit",
+		"Use file tools only as a fallback",
+		"workspace and authorized directories",
+	} {
+		if !strings.Contains(prompt, needle) {
+			t.Fatalf("expected hourly prompt to contain %q", needle)
+		}
+	}
 }
 
 func TestDefaultDailyExperienceCurationPromptIncludesArtifactRules(t *testing.T) {
@@ -44,6 +53,9 @@ func TestDefaultDailyExperienceCurationPromptIncludesArtifactRules(t *testing.T)
 		"Shared knowledge:",
 		"Shared skills:",
 		"SKILL.md",
+		"Prefer memory_search, memory_read, memory_write, and memory_edit",
+		"Use file tools only as a fallback",
+		"workspace and authorized directories",
 	} {
 		if !strings.Contains(prompt, needle) {
 			t.Fatalf("expected daily prompt to contain %q", needle)
