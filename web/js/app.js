@@ -84,6 +84,13 @@ document.addEventListener('DOMContentLoaded', function() {
     renderPendingMediaTray();
     updateComposerVisionState();
     updateSidebarVersion();
+
+    // Init duck ASCII art animation
+    if (window.DuckAnimator && window.DUCK_TEMPLATES && window.EVODUCK_ASCII) {
+        window._duckAnimator = new DuckAnimator('duckArt', 'evoduckAscii');
+        window._duckAnimator.loadTemplate('idle');
+        window._duckAnimator.start();
+    }
 });
 
 function loadGatewayToken() {

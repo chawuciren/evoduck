@@ -10,8 +10,20 @@ function switchPage(page) {
         targetPage.classList.add('active');
     }
 
+    if (page === 'agents') {
+        fetchAgents();
+    }
+
+    if (page === 'sessions') {
+        fetchSessions();
+    }
+
+    if (page === 'skills') {
+        fetchSkills();
+    }
+
     if (page === 'schedules') {
-        fetchSchedules();
+        refreshSchedules();
     }
 
     if (page === 'knowledge') {
@@ -29,7 +41,12 @@ function switchPage(page) {
         fetchDiagnostics();
     }
 
+    if (page === 'settings') {
+        fetchSettings();
+    }
+
     if (page === 'logs') {
+        fetchLogs();
         setTimeout(function() {
             var container = document.getElementById('logsList');
             if (container) container.scrollTop = container.scrollHeight;

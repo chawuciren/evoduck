@@ -24,6 +24,10 @@ var ptLog = logger.NewModuleLogger("prompt")
 
 var agentPromptFileWhitelist = []string{"AGENTS.md", "SOUL.md", "TOOLS.md", "IDENTITY.md", "HEARTBEAT.md", "BOOTSTRAP.md"}
 
+func AgentPromptFileWhitelist() []string {
+	return append([]string(nil), agentPromptFileWhitelist...)
+}
+
 type PromptBuilder struct {
 	workspace     string
 	agentID       string

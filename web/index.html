@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>EvoDuck WebChat</title>
-    <link rel="stylesheet" href="css/style.css?v=20260425b">
+    <link rel="stylesheet" href="css/style.css?v=20260508c">
 </head>
 <body>
     <!-- Connection Page (shown before connecting) -->
@@ -33,8 +33,10 @@
         <!-- Sidebar -->
         <div class="sidebar">
             <div class="sidebar-header">
-                <div class="sidebar-logo brand-pixel">EVODUCK</div>
-                <div class="sidebar-subtitle">AI Agent Platform</div>
+                <div class="sidebar-brand">
+                    <pre class="duck-art" id="duckArt"></pre>
+                    <pre class="evoduck-ascii" id="evoduckAscii"></pre>
+                </div>
             </div>
             <div class="sidebar-nav">
                 <div class="nav-section">
@@ -127,6 +129,7 @@
                     <h1 class="brand-pixel">EvoDuck WebChat</h1>
                     <div class="page-header-actions">
                         <button id="backToMainChatBtn" class="action-btn" type="button" onclick="returnToMainChat()" style="display:none;">Back to Main Chat</button>
+                        <button id="newSessionBtn" class="action-btn" type="button" onclick="startNewSession()" title="Start new session">New Session</button>
                         <select id="agentSelect" class="agent-selector" onchange="onAgentChange()">
                             <option value="">Default Agent</option>
                         </select>
@@ -140,7 +143,6 @@
                     <div id="pendingMediaTray" class="pending-media-tray" style="display:none;"></div>
                     <div class="chat-input-row">
                         <button id="cmdBtn" class="terminal-icon-btn" onclick="toggleCommandDropdown()" title="Commands">/</button>
-                        <button id="newSessionBtn" class="terminal-icon-btn" type="button" onclick="startNewSession()" title="Start new session">🆕</button>
                         <button id="mediaUploadBtn" class="terminal-icon-btn" type="button" onclick="openMediaPicker()" title="Upload image">+</button>
                         <div class="chat-input-shell">
                             <input type="file" id="mediaFileInput" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
@@ -179,7 +181,12 @@
                     </div>
                 </div>
                 <div class="page-content">
-                    <div class="knowledge-list" id="memoryList"></div>
+                    <div class="memory-layout">
+                        <div class="memory-list-panel">
+                            <div class="memory-list" id="memoryList"></div>
+                        </div>
+                        <div class="memory-preview-panel" id="memoryPreviewPanel"></div>
+                    </div>
                 </div>
             </div>
 
@@ -407,12 +414,15 @@
     <script src="js/skills-page.js?v=20260425b"></script>
     <script src="js/sessions-page.js?v=20260425b"></script>
     <script src="js/schedules-page.js?v=20260425b"></script>
-    <script src="js/knowledge-page.js?v=20260425b"></script>
+    <script src="js/memory-page.js?v=20260508c"></script>
+    <script src="js/knowledge-page.js?v=20260508c"></script>
     <script src="js/diagnostics-page.js?v=20260425b"></script>
     <script src="js/settings-page.js?v=20260425b"></script>
     <script src="js/logs-page.js?v=20260425b"></script>
     <script src="js/chat.js?v=20260425b"></script>
     <script src="js/commands.js?v=20260425b"></script>
+    <script src="js/duck-frames.js?v=20260508a"></script>
+    <script src="js/duck.js?v=20260508a"></script>
     <script src="js/app.js?v=20260425b"></script>
 </body>
 </html>

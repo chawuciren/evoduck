@@ -1,0 +1,203 @@
+/* ===== Memory Page ===== */
+.memory-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(360px, 0.95fr);
+    gap: 24px;
+    align-items: start;
+}
+
+.memory-list-panel,
+.memory-preview-panel {
+    min-width: 0;
+}
+
+.memory-list {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.memory-item {
+    appearance: none;
+    width: 100%;
+    text-align: left;
+    cursor: pointer;
+    background: linear-gradient(180deg, rgba(10, 18, 31, 0.96) 0%, rgba(8, 14, 24, 0.92) 100%);
+    border: 1px solid rgba(86, 247, 177, 0.14);
+    border-radius: var(--radius-panel);
+    padding: 18px 20px;
+    backdrop-filter: blur(10px);
+    transition: all 0.2s;
+}
+
+.memory-item:hover {
+    border-color: rgba(86, 247, 177, 0.28);
+    box-shadow: 6px 6px 0 rgba(3, 8, 15, 0.95);
+}
+
+.memory-item.active {
+    border-color: rgba(86, 247, 177, 0.44);
+    box-shadow: 0 0 0 1px rgba(86, 247, 177, 0.16), 6px 6px 0 rgba(3, 8, 15, 0.95);
+}
+
+.memory-item:focus-visible {
+    outline: 2px solid rgba(86, 247, 177, 0.65);
+    outline-offset: 2px;
+}
+
+.memory-item-title {
+    font-size: 15px;
+    color: var(--text-main);
+    margin-bottom: 8px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+}
+
+.memory-item-summary {
+    font-size: 13px;
+    color: var(--text-soft);
+    line-height: 1.7;
+}
+
+.memory-item-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 14px;
+}
+
+.memory-meta-chip {
+    padding: 4px 10px;
+    background: rgba(11, 20, 34, 0.88);
+    border: 1px solid rgba(53, 214, 255, 0.18);
+    border-radius: 999px;
+    font-size: 11px;
+    color: var(--accent-2);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.memory-preview-panel {
+    background: linear-gradient(180deg, rgba(10, 18, 31, 0.96) 0%, rgba(8, 14, 24, 0.92) 100%);
+    border: 1px solid rgba(86, 247, 177, 0.14);
+    border-radius: var(--radius-panel);
+    min-height: 520px;
+    max-height: calc(100vh - 48px);
+    position: sticky;
+    top: 24px;
+    backdrop-filter: blur(10px);
+    overflow: hidden;
+}
+
+.memory-preview-shell,
+.memory-preview-empty {
+    padding: 24px;
+    min-height: 100%;
+}
+
+.memory-preview-shell {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: var(--content-scrollbar-thumb) var(--content-scrollbar-track);
+}
+
+.memory-preview-empty {
+    min-height: 520px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 10px;
+}
+
+.memory-preview-kicker {
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent-2);
+}
+
+.memory-preview-title {
+    margin: 8px 0 10px;
+    font-size: 24px;
+    line-height: 1.2;
+    color: var(--text-main);
+    font-weight: 700;
+    word-break: break-word;
+}
+
+.memory-preview-text,
+.memory-preview-meta,
+.memory-preview-source {
+    font-size: 14px;
+    line-height: 1.7;
+    color: var(--text-soft);
+}
+
+.memory-preview-meta {
+    display: grid;
+    gap: 10px;
+}
+
+.memory-preview-section {
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid rgba(53, 214, 255, 0.12);
+}
+
+.memory-preview-section-title {
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent-2);
+    margin-bottom: 12px;
+}
+
+.memory-preview-source,
+.memory-preview-content {
+    word-break: break-word;
+}
+
+.memory-preview-content {
+    margin: 0;
+    padding: 16px;
+    border-radius: 12px;
+    border: 1px solid rgba(53, 214, 255, 0.12);
+    background: rgba(6, 11, 19, 0.92);
+    color: rgba(214, 226, 255, 0.9);
+    font-size: 12px;
+    line-height: 1.7;
+    white-space: pre-wrap;
+    overflow: auto;
+    max-height: 420px;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: var(--content-scrollbar-thumb) var(--content-scrollbar-track);
+}
+
+@media (max-width: 1100px) {
+    .memory-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .memory-preview-panel {
+        position: static;
+        min-height: 0;
+        max-height: none;
+    }
+
+    .memory-preview-shell {
+        max-height: none;
+        overflow: visible;
+    }
+
+    .memory-preview-empty {
+        min-height: 280px;
+    }
+}

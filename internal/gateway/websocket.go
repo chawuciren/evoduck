@@ -933,8 +933,8 @@ func (g *Gateway) handleWSCancel(conn *websocket.Conn, wsMsg WSMessage) {
 
 // HistoryMessage 历史消息
 type HistoryMessage struct {
-	Role      string                 `json:"role"`      // "user" or "assistant"
-	Content   string                 `json:"content"`   // 消息内容
+	Role      string                 `json:"role"`    // "user" or "assistant"
+	Content   string                 `json:"content"` // 消息内容
 	Media     []models.OutgoingMedia `json:"media,omitempty"`
 	Timestamp int64                  `json:"timestamp"` // 时间戳
 }
@@ -1693,21 +1693,59 @@ func (g *Gateway) handleWSMemory(conn *websocket.Conn, wsMsg WSMessage) {
 		return
 	}
 
+	for _, name := range agent.AgentPromptFileWhitelist() {
+		agentPath := filepath.Join(a.Config.Workspace, name)
+		content, err := readFileContent(agentPath)
+		if err != nil || content == "" {
+			continue
+		}
+		title := extractTitle(content, strings.TrimSuffix(name, ".md"))
+		entries = append(entries, KnowledgeEntry{
+			ID:          a.ID + "-agent-" + strings.ToLower(strings.TrimSuffix(name, ".md")),
+			Title:       title,
+			Content:     content,
+			Source:      agentPath,
+			Type:        "memory",
+			Category:    "agent_memory",
+			AgentID:     a.ID,
+			Description: "Prompt-whitelisted agent memory file.",
+		})
+	}
+
 	if wsMsg.UserID != "" {
 		userBaseDir := knowledgeUserBaseDir(g.currentConfig().DataDir, a.ID, wsMsg.UserID)
-		userMemoryPath := filepath.Join(userBaseDir, "MEMORY.md")
-		if content, err := readFileContent(userMemoryPath); err == nil && content != "" {
-			title := extractTitle(content, wsMsg.UserID+" MEMORY")
+		userFiles := []struct {
+			name        string
+			path        string
+			description string
+		}{
+			{
+				name:        "USER.md",
+				path:        filepath.Join(userBaseDir, "USER.md"),
+				description: "User-specific profile and collaboration guidance.",
+			},
+			{
+				name:        "MEMORY.md",
+				path:        filepath.Join(userBaseDir, "MEMORY.md"),
+				description: "User-specific long-term memory index.",
+			},
+		}
+		for _, userFile := range userFiles {
+			content, err := readFileContent(userFile.path)
+			if err != nil || content == "" {
+				continue
+			}
+			title := extractTitle(content, userFile.name)
 			entries = append(entries, KnowledgeEntry{
-				ID:          a.ID + "-" + wsMsg.UserID + "-user-memory",
+				ID:          a.ID + "-" + wsMsg.UserID + "-user-" + strings.ToLower(strings.TrimSuffix(userFile.name, ".md")),
 				Title:       title,
 				Content:     content,
-				Source:      userMemoryPath,
+				Source:      userFile.path,
 				Type:        "memory",
 				Category:    "user_memory",
 				AgentID:     a.ID,
 				UserID:      wsMsg.UserID,
-				Description: "User-specific long-term memory for the current user.",
+				Description: userFile.description,
 			})
 		}
 

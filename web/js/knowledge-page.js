@@ -1,20 +1,10 @@
-// ===== Memory and Knowledge Pages =====
+// ===== Knowledge Page =====
 
-var memoryData = [];
 var knowledgeData = [];
 var selectedKnowledgePath = '';
 var selectedKnowledgeDirectory = 'all';
 var selectedKnowledgeTags = [];
 var createdKnowledgeDirectories = [];
-
-function fetchMemory(query) {
-    query = query || '';
-    if (!sendWSRequest('get_memory', {
-        message: query,
-        agent_id: currentAgentId,
-        user_id: WEBCAT_USER_ID
-    })) renderMemory();
-}
 
 function fetchKnowledge(query) {
     query = query || '';
@@ -198,44 +188,6 @@ function renderKnowledgeCurrentPath() {
     container.innerHTML = 'Path: ' + parts.map(function(part) {
         return '<span class="knowledge-breadcrumb-segment">' + escapeHtml(part) + '</span>';
     }).join('<span class="knowledge-breadcrumb-sep"> / </span>');
-}
-
-function renderMemory() {
-    var container = document.getElementById('memoryList');
-    if (!container) return;
-    if (!memoryData || memoryData.length === 0) {
-        container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🧠</div><div class="empty-state-text">No memory entries found</div><div class="empty-state-detail">Create agent, user, or medium memory to populate this view.</div></div>';
-        return;
-    }
-
-    var groups = {
-        agent_memory: { title: 'Agent Memory', items: [] },
-        user_memory: { title: 'User Memory', items: [] },
-        medium_memory: { title: 'Medium Memory', items: [] }
-    };
-
-    memoryData.forEach(function(entry) {
-        var category = entry.category || 'agent_memory';
-        if (!groups[category]) {
-            groups[category] = { title: category.replace(/_/g, ' '), items: [] };
-        }
-        groups[category].items.push(entry);
-    });
-
-    var order = ['agent_memory', 'user_memory', 'medium_memory'];
-    container.innerHTML = order.map(function(category) {
-        var group = groups[category];
-        if (!group || group.items.length === 0) return '';
-        return '<section class="knowledge-section">'
-            + '<div class="knowledge-section-header">'
-            + '<h2 class="knowledge-section-title">' + group.title + '</h2>'
-            + '<span class="knowledge-section-count">' + group.items.length + '</span>'
-            + '</div>'
-            + '<div class="knowledge-section-list">'
-            + group.items.map(function(entry) { return renderKnowledgeCard(entry, 'memory'); }).join('')
-            + '</div>'
-            + '</section>';
-    }).join('');
 }
 
 function renderKnowledge() {

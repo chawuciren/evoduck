@@ -4,7 +4,8 @@
 @import url("agents.css");
 @import url("skills.css");
 @import url("sessions.css");
-@import url("knowledge.css");
+@import url("memory.css?v=20260508c");
+@import url("knowledge.css?v=20260508c");
 @import url("diagnostics.css");
 @import url("settings.css");
 @import url("schedules.css");
