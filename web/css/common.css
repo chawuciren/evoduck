@@ -183,7 +183,7 @@ body::before {
     font-family: "Consolas", "Monaco", "Courier New", monospace;
     font-size: 7px;
     line-height: 1.15;
-    color: rgba(53, 214, 255, 0.3);
+    color: #FFD700;
     margin: 0;
     padding: 0;
     background: transparent;
@@ -191,7 +191,7 @@ body::before {
     white-space: pre;
     user-select: none;
     -webkit-user-select: none;
-    text-align: center;
+    text-align: left;
     letter-spacing: 0;
 }
 
@@ -207,7 +207,7 @@ body::before {
     white-space: pre;
     user-select: none;
     -webkit-user-select: none;
-    text-align: center;
+    text-align: left;
     letter-spacing: 0;
 }
 

@@ -51,12 +51,12 @@ DuckAnimator.prototype._scheduleSwitch = function() {
   }, delay);
 };
 
-// ---- Render duck frame into colored HTML ----
+// ---- Render duck frame as plain text (color via CSS) ----
 DuckAnimator.prototype.renderDuck = function() {
   if (!this.duckEl) return;
   var tmpl = DUCK_TEMPLATES[this.currentTemplate];
   if (!tmpl || !tmpl.frames[this.frameIndex]) return;
-  this.duckEl.innerHTML = colorizeDuckFrame(tmpl.frames[this.frameIndex]);
+  this.duckEl.textContent = tmpl.frames[this.frameIndex];
 };
 
 // ---- Render EVODUCK text into colored HTML (static) ----
@@ -64,48 +64,6 @@ DuckAnimator.prototype.renderText = function() {
   if (!this.textEl) return;
   this.textEl.innerHTML = colorizeEvoduckText(EVODUCK_ASCII);
 };
-
-// ===== Color functions =====
-
-// Duck body: █▓▒ → yellow family, ░ → dim cyan shadow
-function colorizeDuckFrame(frame) {
-  var lines = frame.split('\n');
-  var out = [];
-  for (var i = 0; i < lines.length; i++) {
-    out.push(colorizeDuckLine(lines[i]));
-  }
-  return out.join('\n');
-}
-
-function colorizeDuckLine(line) {
-  if (!line) return '';
-  var result = '';
-  var i = 0;
-  while (i < line.length) {
-    var ch = line[i];
-    var color = getDuckCharColor(ch);
-    var j = i;
-    while (j < line.length && getDuckCharColor(line[j]) === color) { j++; }
-    var segment = line.substring(i, j);
-    if (color) {
-      result += '<span style="color:' + color + '">' + escapeHtml(segment) + '</span>';
-    } else {
-      result += segment;
-    }
-    i = j;
-  }
-  return result;
-}
-
-function getDuckCharColor(ch) {
-  switch (ch) {
-    case '█': return '#FFD700'; // █ full block → bright gold
-    case '▓': return '#E6B800'; // ▓ dark shade → dark gold
-    case '▒': return '#FFE44D'; // ▒ medium shade → light gold
-    case '░': return '#A0324F'; // ░ light shade → dim cyan shadow
-    default: return null;
-  }
-}
 
 // EVODUCK text: box-drawing → green, blocks → cyan, shadow ░ → dim
 function colorizeEvoduckText(text) {
