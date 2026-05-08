@@ -83,6 +83,7 @@ document.addEventListener('DOMContentLoaded', function() {
     initComposerMediaControls();
     renderPendingMediaTray();
     updateComposerVisionState();
+    updateSidebarVersion();
 });
 
 function loadGatewayToken() {
@@ -108,6 +109,14 @@ function saveGatewayToken(token) {
 function getGatewayToken() {
     var gatewayTokenInput = document.getElementById('gatewayTokenInput');
     return gatewayTokenInput ? gatewayTokenInput.value.trim() : '';
+}
+
+function updateSidebarVersion() {
+    var el = document.getElementById('sidebarVersionText');
+    if (!el) return;
+    var version = settingsSummaryData && settingsSummaryData.system ? settingsSummaryData.system.version : '';
+    version = String(version || '').trim();
+    el.textContent = 'Version ' + (version || '—');
 }
 
 // ---- Connection ----
@@ -446,6 +455,7 @@ function handleMessage(data) {
             if (!isSettingsDirty()) {
                 settingsData = settingsSummaryData;
             }
+            updateSidebarVersion();
             renderSettings();
             addLog('info', 'Loaded settings summary');
             break;

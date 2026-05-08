@@ -43,6 +43,7 @@ function initPages() {
     fetchSessions();
     fetchSchedules();
     fetchSettings();
+    sendWSRequest('get_settings');
     fetchDiagnostics();
     fetchMemory();
     fetchKnowledge();

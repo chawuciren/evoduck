@@ -599,6 +599,7 @@ func buildGatewayRuntime() (*gateway.Gateway, *plugin.Manager, *config.Config, e
 	})
 
 	// 创建 Gateway
+	gateway.SetRuntimeVersion(Version)
 	gw := gateway.New(cfg, cfgFile, llmReg, agentMgr, pluginMgr, proxyDecider)
 	agentMgr.SetScheduleManager(gw)
 	agentMgr.SetSessionGateway(gw)
