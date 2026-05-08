@@ -140,11 +140,11 @@ func (p *curationReportProvider) Chat(_ context.Context, messages []models.Messa
 				ID: "call-hourly-daily-log",
 				Function: models.ToolCallFunction{
 					Name:      "memory_write",
-					Arguments: `{"path":"memory/2026-05-08.md","content":"Hourly curation log\n- captured session preference: concise updates"}`,
+					Arguments: `{"path":"memory/2026-05-08.md","content":"3-hour curation log\n- captured session preference: concise updates"}`,
 				},
 			}}}, nil
 		default:
-			return &models.Response{Content: "hourly-report: updated memory/2026-05-08.md with concise-updates note"}, nil
+			return &models.Response{Content: "3-hour-report: updated memory/2026-05-08.md with concise-updates note"}, nil
 		}
 	}
 	switch toolMessages {
@@ -291,7 +291,7 @@ func TestSystemScheduleRecordsUseExperienceCurator(t *testing.T) {
 	gw := New(&config.Config{
 		DataDir: root,
 		Scheduler: config.SchedulerConfig{SystemTasks: config.SystemSchedulerTasksConfig{
-			MemoryCuration:     config.SystemTaskConfig{Schedule: "0 * * * *"},
+			MemoryCuration:     config.SystemTaskConfig{Schedule: "0 */3 * * *"},
 			ExperienceCuration: config.SystemTaskConfig{Schedule: "0 3 * * *"},
 		}},
 	}, filepath.Join(root, "config.yaml"), llmReg, agentMgr, nil, nil)
@@ -339,7 +339,7 @@ func TestSystemScheduleNoPersistentSessionFiles(t *testing.T) {
 	gw := New(&config.Config{
 		DataDir: root,
 		Scheduler: config.SchedulerConfig{SystemTasks: config.SystemSchedulerTasksConfig{
-			MemoryCuration:     config.SystemTaskConfig{Schedule: "0 * * * *"},
+			MemoryCuration:     config.SystemTaskConfig{Schedule: "0 */3 * * *"},
 			ExperienceCuration: config.SystemTaskConfig{Schedule: "0 3 * * *"},
 		}},
 	}, filepath.Join(root, "config.yaml"), llmReg, agentMgr, nil, nil)
@@ -544,7 +544,7 @@ func TestConfigApplyEnsuresExperienceCuratorScaffold(t *testing.T) {
 		DefaultAgent: "admin-bot",
 		Agents:       map[string]config.AgentConfig{"admin-bot": {Workspace: filepath.Join(root, "agents", "admin-bot"), Provider: "stub", Model: "stub-model", Role: string(models.RoleAdmin)}},
 		LLM:          config.LLMConfig{DefaultProvider: "stub", DefaultModel: "stub-model"},
-		Scheduler:    config.SchedulerConfig{SystemTasks: config.SystemSchedulerTasksConfig{MemoryCuration: config.SystemTaskConfig{Schedule: "0 * * * *"}, ExperienceCuration: config.SystemTaskConfig{Schedule: "0 3 * * *"}}},
+		Scheduler:    config.SchedulerConfig{SystemTasks: config.SystemSchedulerTasksConfig{MemoryCuration: config.SystemTaskConfig{Schedule: "0 */3 * * *"}, ExperienceCuration: config.SystemTaskConfig{Schedule: "0 3 * * *"}}},
 		Channels:     config.ChannelsConfig{},
 	}
 
@@ -576,7 +576,7 @@ func TestUserCannotManageSystemSchedules(t *testing.T) {
 	if err := agentMgr.Register(agent.ExperienceCuratorID, agent.ExperienceCuratorConfig(root, config.AgentConfig{Provider: "stub", Model: "stub-model"})); err != nil {
 		t.Fatalf("register curator: %v", err)
 	}
-	gw := New(&config.Config{DataDir: root, Scheduler: config.SchedulerConfig{SystemTasks: config.SystemSchedulerTasksConfig{MemoryCuration: config.SystemTaskConfig{Schedule: "0 * * * *"}, ExperienceCuration: config.SystemTaskConfig{Schedule: "0 3 * * *"}}}}, filepath.Join(root, "config.yaml"), llmReg, agentMgr, nil, nil)
+	gw := New(&config.Config{DataDir: root, Scheduler: config.SchedulerConfig{SystemTasks: config.SystemSchedulerTasksConfig{MemoryCuration: config.SystemTaskConfig{Schedule: "0 */3 * * *"}, ExperienceCuration: config.SystemTaskConfig{Schedule: "0 3 * * *"}}}}, filepath.Join(root, "config.yaml"), llmReg, agentMgr, nil, nil)
 	if err := gw.registerSystemScheduledTasks(); err != nil {
 		t.Fatalf("register system tasks: %v", err)
 	}
@@ -638,7 +638,7 @@ shared:
 scheduler:
   system_tasks:
     memory_curation:
-      schedule: "0 * * * *"
+      schedule: "0 */3 * * *"
     experience_curation:
       schedule: "0 3 * * *"
 `
@@ -833,7 +833,7 @@ func TestHandleWSHistoryUsesExplicitScheduleSessionKey(t *testing.T) {
 	}
 }
 
-func TestTriggerHourlyCurationProducesReportableArtifacts(t *testing.T) {
+func TestTriggerThreeHourCurationProducesReportableArtifacts(t *testing.T) {
 	root := t.TempDir()
 	llmReg, err := llm.NewRegistry(config.LLMConfig{
 		DefaultProvider: "curation-report",
@@ -864,20 +864,20 @@ func TestTriggerHourlyCurationProducesReportableArtifacts(t *testing.T) {
 	sess.UpdatedAt = time.Now().Add(-10 * time.Minute)
 
 	record := scheduler.ScheduleRecord{ID: "system:memory-curation", AgentID: agent.ExperienceCuratorID, Metadata: map[string]string{"task_kind": "memory_curation"}}
-	if err := gw.executeCuratorSystemTask(record, "memory_curation", "hourly-report"); err != nil {
-		t.Fatalf("execute curator hourly task: %v", err)
+	if err := gw.executeCuratorSystemTask(record, "memory_curation", "3-hour-report"); err != nil {
+		t.Fatalf("execute curator 3-hour task: %v", err)
 	}
 
 	dailyPath := filepath.Join(root, "users", "source-agent_user_alice", "memory", "2026-05-08.md")
 	data, err := os.ReadFile(dailyPath)
 	if err != nil {
-		t.Fatalf("read hourly curation result: %v", err)
+		t.Fatalf("read 3-hour curation result: %v", err)
 	}
 	content := string(data)
-	if !strings.Contains(content, "Hourly curation log") || !strings.Contains(content, "concise updates") {
-		t.Fatalf("unexpected hourly artifact: %q", content)
+	if !strings.Contains(content, "3-hour curation log") || !strings.Contains(content, "concise updates") {
+		t.Fatalf("unexpected 3-hour artifact: %q", content)
 	}
-	t.Logf("hourly report\n- target: source-agent/alice\n- selected sessions: 1\n- updated files: users/source-agent_user_alice/memory/2026-05-08.md\n- artifact summary: %s", strings.ReplaceAll(strings.TrimSpace(content), "\n", " | "))
+	t.Logf("3-hour report\n- target: source-agent/alice\n- selected sessions: 1\n- updated files: users/source-agent_user_alice/memory/2026-05-08.md\n- artifact summary: %s", strings.ReplaceAll(strings.TrimSpace(content), "\n", " | "))
 }
 
 func TestTriggerDailyCurationProducesReportableArtifacts(t *testing.T) {

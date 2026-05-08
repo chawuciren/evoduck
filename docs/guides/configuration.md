@@ -213,7 +213,7 @@ Controls optional periodic self-check prompts.
 scheduler:
   system_tasks:
     memory_curation:
-      schedule: "0 * * * *"
+      schedule: "0 */3 * * *"
     experience_curation:
       schedule: "0 3 * * *"
 ```

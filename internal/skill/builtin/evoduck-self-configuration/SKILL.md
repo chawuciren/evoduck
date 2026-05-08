@@ -272,7 +272,7 @@ heartbeat:
 scheduler:
   system_tasks:
     memory_curation:
-      schedule: "0 * * * *"
+      schedule: "0 */3 * * *"
     experience_curation:
       schedule: "0 3 * * *"
 
@@ -480,7 +480,7 @@ Session tool availability is determined by role, policy, explicit agent tool all
 - `heartbeat.enabled`: bool.
 - `heartbeat.interval`: duration. Default `30m`.
 - `heartbeat.prompt`: string.
-- `scheduler.system_tasks.memory_curation.schedule`: cron expression. Default `0 * * * *`. Must parse as standard cron.
+- `scheduler.system_tasks.memory_curation.schedule`: cron expression. Default `0 */3 * * *`. Must parse as standard cron.
 - `scheduler.system_tasks.experience_curation.schedule`: cron expression. Default `0 3 * * *`. Must parse as standard cron.
 
 ### `plugins`

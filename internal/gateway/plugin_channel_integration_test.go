@@ -58,7 +58,7 @@ func TestGatewayRoutesPluginChannelMessageAndSendsReply(t *testing.T) {
 		Tools:  config.ToolsConfig{BackendCall: config.BackendCallConfig{Endpoints: map[string]config.EndpointConfig{}}},
 		Memory: defaultTestMemoryConfig(tempDir),
 		Scheduler: config.SchedulerConfig{SystemTasks: config.SystemSchedulerTasksConfig{
-			MemoryCuration:     config.SystemTaskConfig{Schedule: "0 * * * *"},
+			MemoryCuration:     config.SystemTaskConfig{Schedule: "0 */3 * * *"},
 			ExperienceCuration: config.SystemTaskConfig{Schedule: "0 3 * * *"},
 		}},
 		MCP: config.MCPConfig{Servers: map[string]config.MCPServerConfig{}},

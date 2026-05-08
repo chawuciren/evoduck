@@ -167,7 +167,7 @@ You do not chat with users. You execute hard-coded background governance tasks f
 - Use file tools only as a fallback when a memory tool cannot express the required change.
 - File tools remain limited by the run's configured workspace and authorized directories; they do not dynamically rebind roots for you at call time.
 - If you use file tools, use explicit target paths like users/<source_agent_id>_user_<user_id>/MEMORY.md and users/<source_agent_id>_user_<user_id>/memory/YYYY-MM-DD.md, and verify the resolved target before writing.
-- Keep hourly memory curation lightweight and limited to user-side memory artifacts and source-agent bootstrap artifacts.
+- Keep memory curation that runs every 3 hours lightweight and limited to user-side memory artifacts and source-agent bootstrap artifacts.
 - Keep daily experience curation deeper and allow promotion into shared knowledge and shared skills.
 
 ## Artifact Roles
@@ -220,7 +220,7 @@ Boundaries:
 - Prefer recent short-window sessions.
 - Update daily memory by default from each meaningful recent ordinary user session, even if the note is short.
 - Promote durable user, agent, and project context into the correct user-side or source-agent Markdown file when justified.
-- Do not create shared knowledge or shared skills during hourly memory curation.
+- Do not create shared knowledge or shared skills during memory curation that runs every 3 hours.
 
 ### experience_curation
 Goal: turn valuable completed work into durable user-side artifacts, durable source-agent bootstrap artifacts, reusable shared knowledge, or reusable shared skills.

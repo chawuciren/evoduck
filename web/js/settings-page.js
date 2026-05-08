@@ -962,7 +962,7 @@ function renderSchedulerEditor(field, value) {
         + '<div class="settings-subsection">'
         + '<div class="settings-subsection-title">Memory curation</div>'
         + '<div class="settings-complex-grid">'
-        + '<label class="settings-stack-field settings-stack-field-span"><span class="settings-inline-label">Schedule</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(memoryCuration.schedule || '') + '" oninput="updateSettingsField(\'scheduler.system_tasks.memory_curation.schedule\', this.value, \'text\')" placeholder="0 * * * *"></label>'
+        + '<label class="settings-stack-field settings-stack-field-span"><span class="settings-inline-label">Schedule</span><input type="text" class="settings-input settings-input-wide" value="' + escapeHtml(memoryCuration.schedule || '') + '" oninput="updateSettingsField(\'scheduler.system_tasks.memory_curation.schedule\', this.value, \'text\')" placeholder="0 */3 * * *"></label>'
         + '</div>'
         + '</div>'
         + '<div class="settings-subsection">'

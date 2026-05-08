@@ -669,7 +669,7 @@ func setDefaults(cfg *Config, defaultDataDir string) {
 		cfg.Heartbeat.Interval = 30 * time.Minute
 	}
 	if cfg.Scheduler.SystemTasks.MemoryCuration.Schedule == "" {
-		cfg.Scheduler.SystemTasks.MemoryCuration.Schedule = "0 * * * *"
+		cfg.Scheduler.SystemTasks.MemoryCuration.Schedule = "0 */3 * * *"
 	}
 	if cfg.Scheduler.SystemTasks.ExperienceCuration.Schedule == "" {
 		cfg.Scheduler.SystemTasks.ExperienceCuration.Schedule = "0 3 * * *"

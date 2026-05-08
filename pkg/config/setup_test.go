@@ -92,7 +92,7 @@ func minimalValidConfigForProvider(provider ProviderConfig) *Config {
 			MediumTerm: MediumTermConfig{MaxSize: 100},
 		},
 		Scheduler: SchedulerConfig{SystemTasks: SystemSchedulerTasksConfig{
-			MemoryCuration:     SystemTaskConfig{Schedule: "0 * * * *"},
+			MemoryCuration:     SystemTaskConfig{Schedule: "0 */3 * * *"},
 			ExperienceCuration: SystemTaskConfig{Schedule: "0 3 * * *"},
 		}},
 	}

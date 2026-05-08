@@ -935,7 +935,7 @@ func (g *Gateway) systemScheduleRecords() []scheduler.ScheduleRecord {
 			Scope:               scheduler.ScheduleScopeSystem,
 			AgentID:             agent.ExperienceCuratorID,
 			Schedule:            cfg.Scheduler.SystemTasks.MemoryCuration.Schedule,
-			Description:         "Run hourly lightweight user memory curation with the experience curator",
+			Description:         "Run lightweight user memory curation every 3 hours with the experience curator",
 			Enabled:             true,
 			ExecutionSessionKey: "agent:" + agent.ExperienceCuratorID + ":schedule:system:memory-curation",
 			ConcurrencyPolicy:   scheduler.ConcurrencyPolicySkipIfRunning,

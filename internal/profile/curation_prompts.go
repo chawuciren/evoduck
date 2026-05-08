@@ -1,7 +1,7 @@
 package profile
 
 func DefaultHourlyMemoryCurationPrompt() string {
-	return `Run hourly memory_curation. Curate recent ordinary user sessions into accurate memory artifacts.
+	return `Run memory_curation every 3 hours. Curate recent ordinary user sessions into accurate memory artifacts.
 
 **Core Objective:**
 - Capture session continuity in daily logs.

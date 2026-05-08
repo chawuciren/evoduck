@@ -8,7 +8,7 @@ import (
 func TestDefaultHourlyMemoryCurationPromptIncludesArtifactRules(t *testing.T) {
 	prompt := DefaultHourlyMemoryCurationPrompt()
 	if strings.TrimSpace(prompt) == "" {
-		t.Fatal("expected hourly prompt to be non-empty")
+		t.Fatal("expected memory-curation prompt to be non-empty")
 	}
 	for _, needle := range []string{
 		"User-side files and their roles:",
@@ -24,11 +24,11 @@ func TestDefaultHourlyMemoryCurationPromptIncludesArtifactRules(t *testing.T) {
 		"BOOTSTRAP.md",
 	} {
 		if !strings.Contains(prompt, needle) {
-			t.Fatalf("expected hourly prompt to contain %q", needle)
+			t.Fatalf("expected memory-curation prompt to contain %q", needle)
 		}
 	}
 	if strings.Contains(prompt, "Shared artifacts:") {
-		t.Fatal("expected hourly prompt not to advertise shared artifact section")
+		t.Fatal("expected memory-curation prompt not to advertise shared artifact section")
 	}
 	for _, needle := range []string{
 		"Prefer memory_search, memory_read, memory_write, and memory_edit",
@@ -36,7 +36,7 @@ func TestDefaultHourlyMemoryCurationPromptIncludesArtifactRules(t *testing.T) {
 		"workspace and authorized directories",
 	} {
 		if !strings.Contains(prompt, needle) {
-			t.Fatalf("expected hourly prompt to contain %q", needle)
+			t.Fatalf("expected memory-curation prompt to contain %q", needle)
 		}
 	}
 }
