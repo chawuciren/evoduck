@@ -1015,24 +1015,24 @@ func (g *Gateway) executeCuratorSystemTask(schedule scheduler.ScheduleRecord, ta
 			TaskKind: taskKind,
 			Sessions: target.Sessions,
 			Metadata: map[string]string{
-				"schedule_id":       schedule.ID,
-				"session_kind":      "schedule",
-				"memory_policy":     "ignore",
-				"task_kind":         taskKind,
-				"source_agent_id":   target.SourceAgentID,
-				"target_user_id":    target.TargetUserID,
+				"schedule_id":        schedule.ID,
+				"session_kind":       "schedule",
+				"memory_policy":      "ignore",
+				"task_kind":          taskKind,
+				"source_agent_id":    target.SourceAgentID,
+				"target_user_id":     target.TargetUserID,
 				"source_session_key": firstSessionKey(target.Sessions),
 			},
 		})
 		if err != nil {
 			logger.Error("Curator system task failed for target", logger.Fields{
-				"schedule_id":      schedule.ID,
-				"task_kind":        taskKind,
-				"source_agent_id":  target.SourceAgentID,
-				"target_user_id":   target.TargetUserID,
-				"source_sessions":  len(target.Sessions),
-				"duration_ms":      time.Since(startedAt).Milliseconds(),
-				"error":            err.Error(),
+				"schedule_id":     schedule.ID,
+				"task_kind":       taskKind,
+				"source_agent_id": target.SourceAgentID,
+				"target_user_id":  target.TargetUserID,
+				"source_sessions": len(target.Sessions),
+				"duration_ms":     time.Since(startedAt).Milliseconds(),
+				"error":           err.Error(),
 			})
 			return err
 		}
@@ -1046,9 +1046,9 @@ func (g *Gateway) executeCuratorSystemTask(schedule scheduler.ScheduleRecord, ta
 		})
 	}
 	logger.Info("Curator system task completed", logger.Fields{
-		"schedule_id":  schedule.ID,
-		"task_kind":    taskKind,
-		"duration_ms":  time.Since(startedAt).Milliseconds(),
+		"schedule_id":   schedule.ID,
+		"task_kind":     taskKind,
+		"duration_ms":   time.Since(startedAt).Milliseconds(),
 		"target_groups": len(targets),
 	})
 	return nil
@@ -1862,17 +1862,27 @@ func (g *Gateway) FlushSessionMemory(agentID string, sess *session.Session, _ mo
 		result.SkippedReason = "agent manager unavailable"
 		return result, nil
 	}
+	sourceAgentID := strings.TrimSpace(agentID)
+	if sourceAgentID == "" {
+		result.Skipped = true
+		result.SkippedReason = "source agent unavailable"
+		return result, nil
+	}
+	targetUserID := resolveSessionResetTargetUserID(sess, userID)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	report, err := g.agentMgr.RunExperienceCuratorEphemeral(ctx, buildSessionResetCurationPrompt(agentID, sess, userID), agent.EphemeralRunOptions{
-		UserID: userID,
+	report, err := g.agentMgr.RunSourceContextCurationEphemeral(ctx, sourceAgentID, targetUserID, buildSessionResetCurationPrompt(agentID, sess, targetUserID), agent.SourceContextCurationOptions{
+		TaskKind:   "session_reset_flush",
+		SourceUser: strings.TrimSpace(sess.GetUserID()),
+		Sessions:   []*session.Session{sess},
 		Metadata: map[string]string{
 			"session_kind":       "session_reset_flush",
 			"memory_policy":      "ignore",
-			"source_agent_id":    strings.TrimSpace(agentID),
+			"source_agent_id":    sourceAgentID,
 			"source_session_key": sess.Key,
 			"source_session_id":  sess.ID,
+			"actor_user_id":      strings.TrimSpace(sess.GetMetadataValue("actor_user_id")),
 		},
 	})
 	if err != nil {
@@ -1888,26 +1898,32 @@ func (g *Gateway) FlushSessionMemory(agentID string, sess *session.Session, _ mo
 	return result, nil
 }
 
-func buildSessionResetCurationPrompt(agentID string, sess *session.Session, userID string) string {
-	var b strings.Builder
+func resolveSessionResetTargetUserID(sess *session.Session, userID string) string {
 	targetUserID := strings.TrimSpace(userID)
-	if targetUserID == "" {
+	if targetUserID == "" && sess != nil {
 		targetUserID = strings.TrimSpace(sess.GetMetadataValue("actor_user_id"))
 	}
-	if targetUserID == "" {
+	if targetUserID == "" && sess != nil {
 		targetUserID = strings.TrimSpace(sess.GetUserID())
 	}
+	return targetUserID
+}
+
+func buildSessionResetCurationPrompt(agentID string, sess *session.Session, userID string) string {
+	var b strings.Builder
+	targetUserID := resolveSessionResetTargetUserID(sess, userID)
 	b.WriteString("Run session_reset memory curation before the source conversation is cleared.\n\n")
 	b.WriteString("Boundaries:\n")
-	b.WriteString("- Use the existing experience-curator tools and normal tool loop.\n")
+	b.WriteString("- You are running source-context curation for the target source agent and target user below, not as a separate memory owner.\n")
 	b.WriteString("- Save only high-value durable user/project facts, preferences, decisions, constraints, reusable troubleshooting, or stable knowledge from the source conversation.\n")
-	b.WriteString("- This is source-context curation inside the target source agent and target user runtime. Prefer memory_search, memory_read, memory_write, and memory_edit for target user memory and source-agent bootstrap updates.\n")
+	b.WriteString("- Prefer memory_search, memory_read, memory_write, and memory_edit before any file tool.\n")
+	b.WriteString("- When the source conversation contains any user-facing content, including casual chat, first inspect the current daily memory note memory/YYYY-MM-DD.md and add the necessary note there unless it is already captured.\n")
+	b.WriteString("- Promote information into MEMORY.md only for stable durable facts, preferences, decisions, constraints, reusable troubleshooting, or project context that should outlive the day.\n")
+	b.WriteString("- Use USER.md only for confirmed profile or preference information.\n")
+	b.WriteString("- Update source-agent bootstrap memory such as AGENTS.md only for durable operating rules that should shape future behavior.\n")
 	b.WriteString("- Use file tools only as a fallback when a memory tool cannot express the required change.\n")
 	b.WriteString("- File tools remain limited by the run's configured workspace and authorized directories; they do not dynamically rebind roots for you at call time.\n")
-	b.WriteString("- Always inspect or create the target source-agent daily memory file memory/YYYY-MM-DD.md for the current date when the source conversation contains any user-facing content, including casual chat.\n")
-	b.WriteString("- Add a concise daily note unless the same point is already present in that daily memory.\n")
-	b.WriteString("- Update MEMORY.md only for stable durable facts, preferences, decisions, constraints, reusable troubleshooting, or project context that should outlive the day.\n")
-	b.WriteString("- Use USER.md only for confirmed profile/preferences.\n")
+	b.WriteString("- Do not stop at an internal summary if something worth preserving should be written into daily memory or long-term memory.\n")
 	b.WriteString("- Do not save this curation task, reset event, tool traces, or internal report text as memory.\n")
 	b.WriteString("- Prefer updating existing memory/knowledge over creating duplicates.\n")
 	b.WriteString("- Finish with a concise internal report of saved, skipped, and failed items.\n\n")

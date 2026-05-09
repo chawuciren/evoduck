@@ -230,6 +230,7 @@ func applySetupOptions(cfg *Config, opts SetupOptions) {
 		provider.BaseURL = defaults.BaseURL
 	}
 	provider.Models = cloneProviderModelConfigs(entry.Models)
+	provider.Models = ensureProviderModelConfig(provider.Models, provider.DefaultModel)
 
 	cfg.LLM.DefaultProvider = providerName
 	cfg.LLM.DefaultModel = provider.DefaultModel
@@ -276,6 +277,23 @@ func applySetupOptions(cfg *Config, opts SetupOptions) {
 		}
 		cfg.Channels[ch.ChannelID] = channelCfg
 	}
+}
+
+func ensureProviderModelConfig(models []ProviderModelConfig, modelID string) []ProviderModelConfig {
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		return models
+	}
+	for _, model := range models {
+		if strings.TrimSpace(model.ID) == modelID {
+			return models
+		}
+	}
+	return append(models, ProviderModelConfig{
+		ID:   modelID,
+		Name: modelID,
+		Type: ProviderModelTypeChat,
+	})
 }
 
 func FirstRunDisplayLLM(cfg *Config, paths Paths) (string, string, bool) {

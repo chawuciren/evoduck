@@ -119,9 +119,12 @@ func TestResolveFirstRunDefaultModelFallsBackToFirstListedModel(t *testing.T) {
 
 func TestResolveFirstRunModelChoiceUsesDefaultForEmptyInput(t *testing.T) {
 	models := []llm.ProviderModel{{ID: "gpt-4o-mini"}, {ID: "gpt-4o"}}
-	got, err := resolveFirstRunModelChoice("", "gpt-4o", models)
+	got, custom, err := resolveFirstRunModelChoice("", "gpt-4o", models)
 	if err != nil {
 		t.Fatalf("resolveFirstRunModelChoice returned error: %v", err)
+	}
+	if custom {
+		t.Fatal("expected default selection, not custom path")
 	}
 	if got != "gpt-4o" {
 		t.Fatalf("expected default model, got %q", got)
@@ -130,30 +133,64 @@ func TestResolveFirstRunModelChoiceUsesDefaultForEmptyInput(t *testing.T) {
 
 func TestResolveFirstRunModelChoiceUsesNumericSelection(t *testing.T) {
 	models := []llm.ProviderModel{{ID: "gpt-4o-mini"}, {ID: "gpt-4o"}}
-	got, err := resolveFirstRunModelChoice("2", "gpt-4o-mini", models)
+	got, custom, err := resolveFirstRunModelChoice("2", "gpt-4o-mini", models)
 	if err != nil {
 		t.Fatalf("resolveFirstRunModelChoice returned error: %v", err)
+	}
+	if custom {
+		t.Fatal("expected listed selection, not custom path")
 	}
 	if got != "gpt-4o" {
 		t.Fatalf("expected second listed model, got %q", got)
 	}
 }
 
-func TestResolveFirstRunModelChoiceRejectsUnknownModelWhenListExists(t *testing.T) {
+func TestResolveFirstRunModelChoiceAcceptsCustomOptionNumber(t *testing.T) {
 	models := []llm.ProviderModel{{ID: "gpt-4o-mini"}, {ID: "gpt-4o"}}
-	if _, err := resolveFirstRunModelChoice("custom-model", "gpt-4o-mini", models); err == nil {
-		t.Fatal("expected custom model to be rejected when model list exists")
+	got, custom, err := resolveFirstRunModelChoice("0", "gpt-4o-mini", models)
+	if err != nil {
+		t.Fatalf("resolveFirstRunModelChoice returned error: %v", err)
+	}
+	if !custom {
+		t.Fatal("expected custom path for option 0")
+	}
+	if got != "" {
+		t.Fatalf("expected empty model for custom branch, got %q", got)
+	}
+}
+
+func TestResolveFirstRunModelChoiceAcceptsCustomKeyword(t *testing.T) {
+	models := []llm.ProviderModel{{ID: "gpt-4o-mini"}, {ID: "gpt-4o"}}
+	got, custom, err := resolveFirstRunModelChoice("custom", "gpt-4o-mini", models)
+	if err != nil {
+		t.Fatalf("resolveFirstRunModelChoice returned error: %v", err)
+	}
+	if !custom {
+		t.Fatal("expected custom path for keyword")
+	}
+	if got != "" {
+		t.Fatalf("expected empty model for custom branch, got %q", got)
 	}
 }
 
 func TestResolveFirstRunModelChoiceAcceptsListedModelID(t *testing.T) {
 	models := []llm.ProviderModel{{ID: "gpt-4o-mini"}, {ID: "gpt-4o"}}
-	got, err := resolveFirstRunModelChoice("gpt-4o", "gpt-4o-mini", models)
+	got, custom, err := resolveFirstRunModelChoice("gpt-4o", "gpt-4o-mini", models)
 	if err != nil {
 		t.Fatalf("resolveFirstRunModelChoice returned error: %v", err)
 	}
+	if custom {
+		t.Fatal("expected listed selection, not custom path")
+	}
 	if got != "gpt-4o" {
 		t.Fatalf("expected listed model id, got %q", got)
+	}
+}
+
+func TestResolveFirstRunModelChoiceRejectsUnknownModelWhenListExists(t *testing.T) {
+	models := []llm.ProviderModel{{ID: "gpt-4o-mini"}, {ID: "gpt-4o"}}
+	if _, _, err := resolveFirstRunModelChoice("custom-model", "gpt-4o-mini", models); err == nil {
+		t.Fatal("expected unknown freeform model to be rejected unless custom option is selected")
 	}
 }
 

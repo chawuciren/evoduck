@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/chawuciren/evoduck/internal/llm"
-	"github.com/chawuciren/evoduck/internal/mediautil"
 	"github.com/chawuciren/evoduck/internal/mcp"
+	"github.com/chawuciren/evoduck/internal/mediautil"
 	"github.com/chawuciren/evoduck/internal/memory"
 	"github.com/chawuciren/evoduck/internal/plugin"
 	"github.com/chawuciren/evoduck/internal/profile"
@@ -406,43 +406,63 @@ func (m *Manager) runExperienceCuratorPreCompact(ctx context.Context, sourceSess
 	if sourceSess == nil || len(msgs) == 0 {
 		return "", nil
 	}
-	curatorCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	curatorCtx, cancel := context.WithTimeout(ctx, 300*time.Second)
 	defer cancel()
+	sourceAgentID := strings.TrimSpace(sourceSess.GetMetadataValue("agent_id"))
+	if sourceAgentID == "" {
+		return "", fmt.Errorf("pre-compaction source agent unavailable")
+	}
+	targetUserID := resolveCurationTargetUserID(sourceSess)
 	metadata := map[string]string{
 		"session_kind":       "pre_compaction_flush",
 		"memory_policy":      "ignore",
+		"source_agent_id":    sourceAgentID,
 		"source_session_key": sourceSess.Key,
 		"source_session_id":  sourceSess.ID,
-	}
-	if sourceAgentID := strings.TrimSpace(sourceSess.GetMetadataValue("agent_id")); sourceAgentID != "" {
-		metadata["source_agent_id"] = sourceAgentID
 	}
 	if actorUserID := strings.TrimSpace(sourceSess.GetMetadataValue("actor_user_id")); actorUserID != "" {
 		metadata["actor_user_id"] = actorUserID
 	}
-	return m.RunExperienceCuratorEphemeral(curatorCtx, buildPreCompactCurationPrompt(sourceSess, msgs), EphemeralRunOptions{
-		UserID:   sourceSess.GetUserID(),
-		Metadata: metadata,
+	return m.RunSourceContextCurationEphemeral(curatorCtx, sourceAgentID, targetUserID, buildPreCompactCurationPrompt(sourceSess, msgs, targetUserID), SourceContextCurationOptions{
+		TaskKind:   "pre_compaction_flush",
+		SourceUser: strings.TrimSpace(sourceSess.GetUserID()),
+		Sessions:   []*session.Session{sourceSess},
+		Metadata:   metadata,
 	})
 }
 
-func buildPreCompactCurationPrompt(sourceSess *session.Session, msgs []models.Message) string {
+func resolveCurationTargetUserID(sourceSess *session.Session) string {
+	if sourceSess == nil {
+		return ""
+	}
+	if actorUserID := strings.TrimSpace(sourceSess.GetMetadataValue("actor_user_id")); actorUserID != "" {
+		return actorUserID
+	}
+	return strings.TrimSpace(sourceSess.GetUserID())
+}
+
+func buildPreCompactCurationPrompt(sourceSess *session.Session, msgs []models.Message, targetUserID string) string {
 	var b strings.Builder
 	b.WriteString("Run pre_compaction memory curation for the source conversation below.\n\n")
 	b.WriteString("Boundaries:\n")
-	b.WriteString("- Use the existing experience-curator tools and normal tool loop.\n")
+	b.WriteString("- You are running source-context curation for the target source agent and target user below, not as a separate memory owner.\n")
 	b.WriteString("- Save only durable user/project facts, preferences, decisions, constraints, reusable troubleshooting, or stable knowledge from the source conversation.\n")
-	b.WriteString("- This is source-context curation inside the target source agent and target user runtime. Prefer memory_search, memory_read, memory_write, and memory_edit for target user memory and source-agent bootstrap updates.\n")
+	b.WriteString("- Prefer memory_search, memory_read, memory_write, and memory_edit before any file tool.\n")
+	b.WriteString("- When the source conversation has meaningful user-facing content, first inspect the current daily memory note memory/YYYY-MM-DD.md and add the necessary note there unless it is already captured.\n")
+	b.WriteString("- Promote information into MEMORY.md only when it is stable enough to outlive the day.\n")
+	b.WriteString("- Use USER.md only for confirmed user profile or preference information.\n")
+	b.WriteString("- Update source-agent bootstrap memory such as AGENTS.md only for durable operating rules that should shape future behavior.\n")
 	b.WriteString("- Use file tools only as a fallback when a memory tool cannot express the required change.\n")
 	b.WriteString("- File tools remain limited by the run's configured workspace and authorized directories; they do not dynamically rebind roots for you at call time.\n")
-	b.WriteString("- Always inspect or create the target source-agent daily memory file memory/YYYY-MM-DD.md for the current date when the source conversation contains meaningful user-facing content.\n")
+	b.WriteString("- Do not stop at an internal summary if something worth preserving should be written into daily memory or long-term memory.\n")
 	b.WriteString("- Do not save this curation task, compaction event, tool traces, or internal report text as memory.\n")
 	b.WriteString("- Prefer updating existing memory/knowledge over creating duplicates.\n")
 	b.WriteString("- Finish with a concise internal report of saved, skipped, and failed items.\n\n")
 	b.WriteString("Source metadata:\n")
 	b.WriteString(fmt.Sprintf("- session_key: %s\n", sourceSess.Key))
 	b.WriteString(fmt.Sprintf("- source_agent_id: %s\n", sourceSess.GetMetadataValue("agent_id")))
-	b.WriteString(fmt.Sprintf("- target_user_id: %s\n", sourceSess.GetUserID()))
+	b.WriteString(fmt.Sprintf("- target_user_id: %s\n", targetUserID))
+	b.WriteString(fmt.Sprintf("- session_user_id: %s\n", sourceSess.GetUserID()))
 	b.WriteString(fmt.Sprintf("- actor_user_id: %s\n\n", sourceSess.GetMetadataValue("actor_user_id")))
 	b.WriteString("Source conversation segment to preserve before compaction:\n")
 	for i, msg := range msgs {
@@ -462,7 +482,7 @@ func (m *Manager) runExperienceCuratorCompactionSummary(ctx context.Context, sou
 	if sourceSess == nil || len(msgs) == 0 {
 		return "", nil
 	}
-	summaryCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	summaryCtx, cancel := context.WithTimeout(ctx, 600*time.Second)
 	defer cancel()
 	metadata := map[string]string{
 		"session_kind":       "compaction_summary",

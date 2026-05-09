@@ -2,6 +2,8 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -237,6 +239,88 @@ func TestSessionSendToolParametersExposeContentAndMedia(t *testing.T) {
 	}
 	if prop, ok := properties["session_key"].(map[string]interface{}); !ok || !strings.Contains(prop["description"].(string), "Defaults to the current session") {
 		t.Fatalf("expected session_key description to mention default current session, got %#v", properties["session_key"])
+	}
+}
+
+func TestSessionHistoryToolRejectsCurrentSession(t *testing.T) {
+	policy := NewSessionToolPolicy(config.SessionToolConfig{})
+	gateway := &stubSessionGateway{sessions: map[string]*session.Session{}}
+	gateway.GetOrCreate("agent:agent-a:user:alice:ws").Append(models.Message{Role: "user", Content: "hello"})
+	tool := NewSessionHistoryTool("agent-a", func() SessionGateway { return gateway }, policy)
+	ctx := WithSessionKey(context.Background(), "agent:agent-a:user:alice:ws")
+
+	_, err := tool.ExecuteWithUserContext(ctx, map[string]interface{}{
+		"session_key": "agent:agent-a:user:alice:ws",
+	}, models.RoleAdmin, "alice", true, t.TempDir())
+	if err == nil {
+		t.Fatal("expected current session history to be rejected")
+	}
+	if !strings.Contains(err.Error(), "cannot read the current session") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSessionHistoryToolClampsLimit(t *testing.T) {
+	policy := NewSessionToolPolicy(config.SessionToolConfig{})
+	gateway := &stubSessionGateway{sessions: map[string]*session.Session{}}
+	sess := gateway.GetOrCreate("agent:agent-a:user:alice:other")
+	for i := 0; i < maxSessionHistoryLimit+10; i++ {
+		sess.Append(models.Message{Role: "user", Content: fmt.Sprintf("msg-%02d", i)})
+	}
+	tool := NewSessionHistoryTool("agent-a", func() SessionGateway { return gateway }, policy)
+	ctx := WithSessionKey(context.Background(), "agent:agent-a:user:alice:ws")
+
+	result, err := tool.ExecuteWithUserContext(ctx, map[string]interface{}{
+		"session_key": "agent:agent-a:user:alice:other",
+		"limit":       float64(maxSessionHistoryLimit + 100),
+	}, models.RoleAdmin, "alice", true, t.TempDir())
+	if err != nil {
+		t.Fatalf("sessions_history: %v", err)
+	}
+	if strings.Contains(result, "msg-00") {
+		t.Fatalf("expected oldest messages to be excluded after clamp, got: %s", result)
+	}
+	if !strings.Contains(result, fmt.Sprintf("msg-%02d", 10)) {
+		t.Fatalf("expected clamped history to start near msg-10, got: %s", result)
+	}
+	if !strings.Contains(result, fmt.Sprintf("msg-%02d", maxSessionHistoryLimit+9)) {
+		t.Fatalf("expected latest message in history, got: %s", result)
+	}
+}
+
+func TestSessionHistoryToolCollapsesNestedHistoryToolOutput(t *testing.T) {
+	policy := NewSessionToolPolicy(config.SessionToolConfig{})
+	gateway := &stubSessionGateway{sessions: map[string]*session.Session{}}
+	nested, err := json.Marshal([]models.Message{
+		{Role: "user", Content: "inner hello"},
+		{Role: "assistant", Content: "inner reply"},
+		{Role: "tool", Content: "[{\"role\":\"user\",\"content\":\"deep\"}]"},
+	})
+	if err != nil {
+		t.Fatalf("marshal nested history: %v", err)
+	}
+	sess := gateway.GetOrCreate("agent:agent-a:user:alice:other")
+	sess.Append(models.Message{Role: "tool", Content: string(nested), ToolCallID: "call-1"})
+	tool := NewSessionHistoryTool("agent-a", func() SessionGateway { return gateway }, policy)
+	ctx := WithSessionKey(context.Background(), "agent:agent-a:user:alice:ws")
+
+	result, err := tool.ExecuteWithUserContext(ctx, map[string]interface{}{
+		"session_key": "agent:agent-a:user:alice:other",
+	}, models.RoleAdmin, "alice", true, t.TempDir())
+	if err != nil {
+		t.Fatalf("sessions_history: %v", err)
+	}
+	if !strings.Contains(result, "collapsed sessions_history output") {
+		t.Fatalf("expected collapsed nested history summary, got: %s", result)
+	}
+	if !strings.Contains(result, "content_collapsed") {
+		t.Fatalf("expected collapse metadata in output, got: %s", result)
+	}
+	if !strings.Contains(result, "nested_history_tool_messages=1") {
+		t.Fatalf("expected nested history count in summary, got: %s", result)
+	}
+	if strings.Contains(result, "\\\"role\\\":\\\"assistant\\\"") {
+		t.Fatalf("expected raw nested JSON to be removed, got: %s", result)
 	}
 }
 

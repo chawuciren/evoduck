@@ -150,6 +150,33 @@ func TestApplySetupOptionsUsesFirstRunProviderForEmptyInput(t *testing.T) {
 	}
 }
 
+func TestApplySetupOptionsAppendsCustomModelToProviderCatalog(t *testing.T) {
+	cfg := &Config{
+		Gateway: GatewayConfig{},
+		LLM: LLMConfig{
+			Providers: map[string]ProviderConfig{
+				defaultFirstRunProvider: {},
+			},
+		},
+		Agents: map[string]AgentConfig{
+			"admin-bot": {},
+		},
+	}
+
+	applySetupOptions(cfg, SetupOptions{Provider: defaultFirstRunProvider, Model: "custom-model"})
+
+	provider := cfg.LLM.Providers[defaultFirstRunProvider]
+	if provider.DefaultModel != "custom-model" {
+		t.Fatalf("expected provider default model to be custom-model, got %q", provider.DefaultModel)
+	}
+	if !providerHasModel(provider.Models, "custom-model") {
+		t.Fatalf("expected custom model to be added to provider models, got %+v", provider.Models)
+	}
+	if err := minimalValidConfigForProvider(provider).Validate(); err != nil {
+		t.Fatalf("expected config with persisted custom model to validate, got %v", err)
+	}
+}
+
 func TestFirstRunDisplayLLMUsesFirstRunProvider(t *testing.T) {
 	paths := Paths{DataDir: "/tmp/evoduck", SharedSkillsDir: "/tmp/evoduck/shared/skills"}
 	cfg := &Config{
@@ -287,7 +314,7 @@ func TestSaveFirstRunSetupCreatesConfigOnlyAfterSuccess(t *testing.T) {
 	}
 }
 
-func TestSaveFirstRunSetupFailureDoesNotCreateFile(t *testing.T) {
+func TestSaveFirstRunSetupPersistsCustomModel(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), ".evoduck", "config", "config.yaml")
 
 	err := SaveFirstRunSetup(configPath, SetupOptions{
@@ -298,11 +325,22 @@ func TestSaveFirstRunSetupFailureDoesNotCreateFile(t *testing.T) {
 		Host:     "127.0.0.1",
 		Port:     18789,
 	})
-	if err == nil {
-		t.Fatal("expected SaveFirstRunSetup to fail")
+	if err != nil {
+		t.Fatalf("expected SaveFirstRunSetup to accept custom model, got %v", err)
 	}
-	if _, statErr := os.Stat(configPath); !os.IsNotExist(statErr) {
-		t.Fatalf("expected config file to remain absent, stat err=%v", statErr)
+	if _, statErr := os.Stat(configPath); statErr != nil {
+		t.Fatalf("expected config file to be created, stat err=%v", statErr)
+	}
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	provider := cfg.LLM.Providers["openai-compatible"]
+	if provider.DefaultModel != "missing-model" {
+		t.Fatalf("expected custom default model to persist, got %q", provider.DefaultModel)
+	}
+	if !providerHasModel(provider.Models, "missing-model") {
+		t.Fatalf("expected custom model to persist in provider models, got %+v", provider.Models)
 	}
 }
 

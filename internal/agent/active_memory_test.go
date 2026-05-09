@@ -85,7 +85,7 @@ func TestRuntimeToolCallsUseActorUserForMemoryTools(t *testing.T) {
 func TestPreCompactPromptWarnsAgainstCuratorMemoryWrite(t *testing.T) {
 	sess := session.NewSession("agent:source:user:alice:ws", "session-1", nil)
 	sess.SetMetadataValue("agent_id", "source")
-	prompt := buildPreCompactCurationPrompt(sess, []models.Message{{Role: "user", Content: "remember this"}})
+	prompt := buildPreCompactCurationPrompt(sess, []models.Message{{Role: "user", Content: "remember this"}}, "alice")
 	for _, want := range []string{
 		"Prefer memory_search, memory_read, memory_write, and memory_edit",
 		"Use file tools only as a fallback",
@@ -238,6 +238,73 @@ func TestRunStreamUsesActorUserForMemoryTools(t *testing.T) {
 		}
 	}
 	assertAliceMemoryOnly(t, dataDir)
+}
+
+func TestRunExperienceCuratorPreCompactRoutesMemoryToTargetNamespace(t *testing.T) {
+	root := t.TempDir()
+	llmReg, err := llm.NewRegistry(config.LLMConfig{
+		DefaultProvider: "source-curation",
+		DefaultModel:    "stub-model",
+		Providers:       map[string]config.ProviderConfig{},
+	}, nil)
+	if err != nil {
+		t.Fatalf("new llm registry: %v", err)
+	}
+	if err := llmReg.RegisterDynamic("source-curation", &sourceContextCurationProvider{}); err != nil {
+		t.Fatalf("register provider: %v", err)
+	}
+
+	mgr := NewManager(llmReg, root, filepath.Join(root, "shared", "skills"), config.BackendCallConfig{}, config.SessionToolConfig{}, config.MemoryConfig{}, nil, nil, nil)
+	if err := mgr.Register("source-agent", config.AgentConfig{
+		Workspace: filepath.Join(root, "agents", "source-agent"),
+		Provider:  "source-curation",
+		Model:     "stub-model",
+		Role:      string(models.RoleAdmin),
+	}); err != nil {
+		t.Fatalf("register source agent: %v", err)
+	}
+	if err := mgr.Register(ExperienceCuratorID, ExperienceCuratorConfig(root, config.AgentConfig{Provider: "source-curation", Model: "stub-model"})); err != nil {
+		t.Fatalf("register curator: %v", err)
+	}
+	curatorAgentPath := filepath.Join(root, "agents", ExperienceCuratorID, "AGENTS.md")
+	curatorBefore, err := os.ReadFile(curatorAgentPath)
+	if err != nil {
+		t.Fatalf("read curator AGENTS.md before run: %v", err)
+	}
+
+	sess := session.NewSession("agent:source-agent:user:session-owner:ws", "sess-1", nil)
+	sess.SetUserID("session-owner")
+	sess.SetMetadataValue("agent_id", "source-agent")
+	sess.SetMetadataValue("actor_user_id", "alice")
+	sess.Append(models.Message{Role: "user", Content: "please keep this preference"})
+
+	report, err := mgr.runExperienceCuratorPreCompact(context.Background(), sess, sess.GetMessages())
+	if err != nil {
+		t.Fatalf("runExperienceCuratorPreCompact: %v", err)
+	}
+	if strings.TrimSpace(report) != "done" {
+		t.Fatalf("expected done report, got %q", report)
+	}
+
+	targetUserPath := filepath.Join(root, "users", "source-agent_user_alice", "MEMORY.md")
+	if data, err := os.ReadFile(targetUserPath); err != nil || string(data) != "Target user durable fact" {
+		t.Fatalf("expected target user memory at %s, data=%q err=%v", targetUserPath, string(data), err)
+	}
+	targetAgentPath := filepath.Join(root, "agents", "source-agent", "AGENTS.md")
+	if data, err := os.ReadFile(targetAgentPath); err != nil || string(data) != "Target agent operating rule" {
+		t.Fatalf("expected target agent bootstrap at %s, data=%q err=%v", targetAgentPath, string(data), err)
+	}
+	curatorUserPath := filepath.Join(root, "users", "experience-curator_user_alice", "MEMORY.md")
+	if _, err := os.Stat(curatorUserPath); !os.IsNotExist(err) {
+		t.Fatalf("did not expect curator user memory namespace write, stat err=%v", err)
+	}
+	curatorAfter, err := os.ReadFile(curatorAgentPath)
+	if err != nil {
+		t.Fatalf("read curator AGENTS.md after run: %v", err)
+	}
+	if string(curatorAfter) != string(curatorBefore) {
+		t.Fatalf("did not expect curator AGENTS.md to change\nbefore:\n%s\nafter:\n%s", string(curatorBefore), string(curatorAfter))
+	}
 }
 
 func TestRunSourceContextCurationEphemeralRoutesMemoryToTargetNamespace(t *testing.T) {

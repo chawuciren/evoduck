@@ -1859,6 +1859,7 @@ func promptFirstRunModel(reader *bufio.Reader, opts config.SetupOptions, require
 	if err == nil && len(models) > 0 {
 		defaultModel := resolveFirstRunDefaultModel(opts, models)
 		fmt.Println("Available models:")
+		fmt.Println("  0) Enter a custom model name")
 		for i, model := range models {
 			fmt.Printf("  %d) %s\n", i+1, model.ID)
 		}
@@ -1868,7 +1869,17 @@ func promptFirstRunModel(reader *bufio.Reader, opts config.SetupOptions, require
 			if err != nil {
 				return "", err
 			}
-			return resolveFirstRunModelChoice(input, defaultModel, models)
+			choice, custom, err := resolveFirstRunModelChoice(input, defaultModel, models)
+			if err != nil {
+				return "", err
+			}
+			if !custom {
+				return choice, nil
+			}
+			if required {
+				return promptRequired(reader, "Custom model name: ")
+			}
+			return promptWithDefault(reader, "Custom model name", opts.Model)
 		})
 	}
 	if err != nil {
@@ -1945,26 +1956,32 @@ func resolveFirstRunDefaultModel(opts config.SetupOptions, models []llm.Provider
 	return preferred
 }
 
-func resolveFirstRunModelChoice(input, defaultModel string, models []llm.ProviderModel) (string, error) {
+func resolveFirstRunModelChoice(input, defaultModel string, models []llm.ProviderModel) (string, bool, error) {
 	choice := strings.TrimSpace(input)
 	if choice == "" {
 		if defaultModel == "" {
-			return "", fmt.Errorf("default model cannot be empty")
+			return "", false, fmt.Errorf("default model cannot be empty")
 		}
-		return defaultModel, nil
+		return defaultModel, false, nil
+	}
+	if strings.EqualFold(choice, "custom") {
+		return "", true, nil
 	}
 	if index, err := strconv.Atoi(choice); err == nil {
-		if index < 1 || index > len(models) {
-			return "", fmt.Errorf("model selection must be between 1 and %d", len(models))
+		if index == 0 {
+			return "", true, nil
 		}
-		return models[index-1].ID, nil
+		if index < 1 || index > len(models) {
+			return "", false, fmt.Errorf("model selection must be 0 or between 1 and %d", len(models))
+		}
+		return models[index-1].ID, false, nil
 	}
 	for _, model := range models {
 		if model.ID == choice {
-			return model.ID, nil
+			return model.ID, false, nil
 		}
 	}
-	return "", fmt.Errorf("model must be a listed name or number")
+	return "", false, fmt.Errorf("model must be 0, 'custom', a listed name, or a listed number")
 }
 
 func resolveProviderChoice(input string) (string, error) {

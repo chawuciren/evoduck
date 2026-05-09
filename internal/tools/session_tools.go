@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/chawuciren/evoduck/internal/session"
 	"github.com/chawuciren/evoduck/pkg/config"
@@ -147,6 +148,11 @@ func (t *SessionListTool) ExecuteWithUserContext(ctx context.Context, args map[s
 	return string(data), nil
 }
 
+const (
+	maxSessionHistoryLimit    = 50
+	sessionHistoryPreviewRunes = 160
+)
+
 type SessionHistoryTool struct {
 	gateway SessionGatewayProvider
 	policy  SessionToolPolicy
@@ -166,8 +172,8 @@ func (t *SessionHistoryTool) Parameters() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"session_key": map[string]interface{}{"type": "string", "description": "Target session key"},
-			"limit":       map[string]interface{}{"type": "integer", "description": "Maximum messages to return, default 20"},
+			"session_key": map[string]interface{}{"type": "string", "description": "Target session key. Must not be the current session."},
+			"limit":       map[string]interface{}{"type": "integer", "description": "Maximum messages to return, default 20, max 50"},
 		},
 		"required": []string{"session_key"},
 	}
@@ -184,13 +190,19 @@ func (t *SessionHistoryTool) ExecuteWithUserContext(ctx context.Context, args ma
 	if sessionKey == "" {
 		return "", fmt.Errorf("session_key is required")
 	}
-	currentSessionKey := SessionKeyFromContext(ctx)
+	currentSessionKey := strings.TrimSpace(SessionKeyFromContext(ctx))
+	if currentSessionKey != "" && currentSessionKey == sessionKey {
+		return "", fmt.Errorf("sessions_history cannot read the current session; current context already includes its history")
+	}
 	if !t.policy.CanAccess(role, currentSessionKey, userID, t.agentID, sessionKey) {
 		return "", fmt.Errorf("access denied to session: %s", sessionKey)
 	}
 	limit := 20
 	if raw, ok := args["limit"].(float64); ok && int(raw) > 0 {
 		limit = int(raw)
+	}
+	if limit > maxSessionHistoryLimit {
+		limit = maxSessionHistoryLimit
 	}
 	gateway, err := t.resolveGateway()
 	if err != nil {
@@ -208,7 +220,7 @@ func (t *SessionHistoryTool) ExecuteWithUserContext(ctx context.Context, args ma
 	if start < 0 {
 		start = 0
 	}
-	data, err := json.MarshalIndent(msgs[start:], "", "  ")
+	data, err := json.MarshalIndent(projectSessionHistoryMessages(msgs[start:]), "", "  ")
 	if err != nil {
 		return "", err
 	}
@@ -423,6 +435,136 @@ func (t *SessionSendTool) resolveGateway() (SessionGateway, error) {
 		return nil, fmt.Errorf("session gateway unavailable")
 	}
 	return gateway, nil
+}
+
+func projectSessionHistoryMessages(msgs []models.Message) []map[string]interface{} {
+	projected := make([]map[string]interface{}, 0, len(msgs))
+	for _, msg := range msgs {
+		item := map[string]interface{}{
+			"role":      msg.Role,
+			"timestamp": msg.Timestamp,
+		}
+		if msg.Content != "" {
+			if summary, ok := summarizeSessionHistoryPayload(msg); ok {
+				item["content"] = summary
+				item["content_collapsed"] = true
+				item["content_original_length"] = len(msg.Content)
+			} else {
+				item["content"] = msg.Content
+			}
+		}
+		if len(msg.Media) > 0 {
+			item["media"] = msg.Media
+		}
+		if msg.ThinkingContent != "" {
+			item["thinking_content"] = msg.ThinkingContent
+		}
+		if msg.ReasoningMetadata != nil {
+			item["reasoning_metadata"] = msg.ReasoningMetadata
+		}
+		if len(msg.ToolCalls) > 0 {
+			item["tool_calls"] = msg.ToolCalls
+		}
+		if msg.ToolCallID != "" {
+			item["tool_call_id"] = msg.ToolCallID
+		}
+		projected = append(projected, item)
+	}
+	return projected
+}
+
+func summarizeSessionHistoryPayload(msg models.Message) (string, bool) {
+	if msg.Role != "tool" || msg.Content == "" {
+		return "", false
+	}
+		var nested []models.Message
+	if err := json.Unmarshal([]byte(msg.Content), &nested); err != nil || !looksLikeSessionHistoryMessages(nested) {
+		return "", false
+	}
+	roleCounts := make(map[string]int)
+	nestedHistoryCount := 0
+	for _, nestedMsg := range nested {
+		roleCounts[nestedMsg.Role]++
+		if nestedMsg.Role == "tool" {
+			var deeper []models.Message
+			if err := json.Unmarshal([]byte(nestedMsg.Content), &deeper); err == nil && looksLikeSessionHistoryMessages(deeper) {
+				nestedHistoryCount++
+			}
+		}
+	}
+	parts := make([]string, 0, len(roleCounts))
+	for _, role := range []string{"system", "user", "assistant", "tool"} {
+		if roleCounts[role] == 0 {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s=%d", role, roleCounts[role]))
+	}
+	for role, count := range roleCounts {
+		if role == "system" || role == "user" || role == "assistant" || role == "tool" || count == 0 {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s=%d", role, count))
+	}
+	sort.Strings(parts)
+	preview := summarizeMessagePreview(nested)
+	summary := fmt.Sprintf("[collapsed sessions_history output: messages=%d; roles=%s", len(nested), strings.Join(parts, ", "))
+	if nestedHistoryCount > 0 {
+		summary += fmt.Sprintf("; nested_history_tool_messages=%d", nestedHistoryCount)
+	}
+	if preview != "" {
+		summary += fmt.Sprintf("; preview=%s", preview)
+	}
+	summary += "]"
+	return summary, true
+}
+
+func looksLikeSessionHistoryMessages(msgs []models.Message) bool {
+	if len(msgs) == 0 {
+		return false
+	}
+	validRoles := map[string]bool{
+		"system":    true,
+		"user":      true,
+		"assistant": true,
+		"tool":      true,
+	}
+	validCount := 0
+	for _, msg := range msgs {
+		if !validRoles[msg.Role] {
+			return false
+		}
+		validCount++
+	}
+	return validCount > 0
+}
+
+func summarizeMessagePreview(msgs []models.Message) string {
+	previews := make([]string, 0, 3)
+	for _, msg := range msgs {
+		text := strings.TrimSpace(msg.Content)
+		if text == "" && len(msg.ToolCalls) > 0 {
+			text = fmt.Sprintf("tool_calls=%d", len(msg.ToolCalls))
+		}
+		if text == "" {
+			continue
+		}
+		previews = append(previews, fmt.Sprintf("%s:%s", msg.Role, truncateRunes(text, sessionHistoryPreviewRunes/3)))
+		if len(previews) == 3 {
+			break
+		}
+	}
+	return truncateRunes(strings.Join(previews, " | "), sessionHistoryPreviewRunes)
+}
+
+func truncateRunes(s string, max int) string {
+	if max <= 0 || utf8.RuneCountInString(s) <= max {
+		return s
+	}
+	runes := []rune(s)
+	if max <= 1 {
+		return string(runes[:max])
+	}
+	return string(runes[:max-1]) + "…"
 }
 
 func decodeOutgoingMedia(raw interface{}) ([]models.OutgoingMedia, error) {

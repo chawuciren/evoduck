@@ -112,8 +112,15 @@ func MergeProviderModels(builtin, fetched []ProviderModel) []ProviderModel {
 }
 
 func listProviderModels(ctx context.Context, p Provider) ([]ProviderModel, error) {
-	_ = ctx
-	return p.BuiltinModels(), nil
+	builtin := p.BuiltinModels()
+	fetched, err := p.FetchModels(ctx)
+	if err != nil {
+		return builtin, nil
+	}
+	if len(fetched) == 0 {
+		return builtin, nil
+	}
+	return MergeProviderModels(builtin, fetched), nil
 }
 
 func builtinModelsFromConfig(defaultModel string, configuredModels []config.ProviderModelConfig) []ProviderModel {
