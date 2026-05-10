@@ -1,6 +1,6 @@
 ---
 name: evoduck-self-configuration
-description: Guide for configuring EvoDuck itself. Use this when the user asks the agent to inspect, explain, or modify EvoDuck configuration, skills, memory, knowledge, tools, MCP, plugins, channels, or reload behavior.
+description: Comprehensive guide for configuring EvoDuck itself. Use this when the user asks the agent to inspect, explain, or modify EvoDuck configuration, setup flow, skills, memory, knowledge, tools, MCP, plugins, channels, proxy behavior, reload behavior, or runtime state.
 license: MIT
 compatibility: evoduck
 metadata:
@@ -11,7 +11,7 @@ metadata:
 
 # EvoDuck Self Configuration Guide
 
-Use this guide when the user asks you to configure EvoDuck, explain what this agent can do, change runtime behavior, add skills, write memory, adjust tools, edit MCP, configure channels, or diagnose why a configuration change did not take effect.
+Use this guide when the user asks you to configure EvoDuck, explain what this EvoDuck instance can do, change runtime behavior, add or update skills, adjust tools, edit MCP or plugins, configure channels, inspect memory routing, or diagnose why a configuration change did not take effect.
 
 ## Identity And Scope
 
@@ -27,32 +27,85 @@ Your behavior is shaped by these sources, in order of practical importance:
 
 Do not guess missing runtime details. Inspect the config, workspace files, tools, and skill list before changing behavior.
 
-## Configuration Files
+## Installation And Config Layout
 
 Default installation layout:
-- App root: `~/.evoduck`
-- Config file: `~/.evoduck/config/config.yaml`
-- Data directory: configured by `data_dir`, defaulting to the app root
+- Windows app root: `%USERPROFILE%/.evoduck`
+- Linux/macOS app root: `~/.evoduck`
+- Default config file: `<app-root>/config/config.yaml`
+- Runtime root: `data_dir` if configured, otherwise the app root
 - Agent workspaces: usually `<data_dir>/agents/<agent-id>`
-- Shared skills: configured by `shared.skills_dir`, defaulting to `<app-root>/shared/skills`
+- Shared skills: `shared.skills_dir`, defaulting to `<app-root>/shared/skills`
+- Logs: usually `<app-root>/logs`
 
-The config file is YAML. Top-level sections include:
+Custom config paths are supported through `--config`. When a custom config path is used:
+- the config directory is the parent of that file
+- if the config file is under a `config/` directory, the runtime root defaults to that directory's parent
+- otherwise the runtime root defaults to the config file's parent directory
+- relative paths in config are resolved against the runtime root, not the current shell directory
+
+Runtime initialization does the following:
+- creates config and runtime directories
+- seeds a default config when missing
+- expands environment variables in config
+- applies defaults and normalizes paths
+- ensures built-in skills exist in the shared skills directory
+- ensures agent scaffold files exist for configured agent workspaces
+
+## First-Run Setup
+
+The first-run flow is catalog-driven.
+
+Important behaviors:
+- `evoduck run` triggers first-run setup automatically when the config still matches the seeded default and the default provider still needs setup
+- `evoduck setup` runs the setup flow explicitly
+- setup chooses a provider, credentials, base URL if needed, a default model, gateway host/port, and optional extra channels
+- first-run provider choices come from the provider catalog
+- first-run channel choices come from the channel catalog
+- `webchat` is always the built-in gateway web entry and does not require extra setup
+
+First-run provider families currently include both vendor-native and compatible modes such as:
+- `openai-compatible`
+- `openai-responses-compatible`
+- `gemini-compatible`
+- `anthropic-compatible`
+- `ollama`
+- `openai`
+- `gemini`
+- `anthropic`
+- `deepseek`
+- `bedrock`
+- `vertex-ai`
+- additional preset compatible providers from the provider catalog
+
+First-run channel choices currently include:
+- `webchat` — built-in gateway web interface
+- `weixin` — QR-login flow that yields token and optional account metadata
+- `wecom` — AI Bot credentials using `bot_id` and `secret`
+
+## Configuration Files
+
+The config file is YAML. Current top-level sections include:
 - `gateway`: host, port, access token
 - `default_agent`: default agent id
 - `data_dir`: runtime data root
-- `logging`: level, json mode, color
-- `llm`: default provider, default model, provider definitions, model options
-- `agents`: agent workspace, role, provider/model overrides, permissions, user isolation
-- `channels`: channel bindings such as webchat, weixin, wecom, or plugin-provided channels
+- `tool_result_condense_limit`: oversize tool-result truncation threshold
+- `image_auto_compress_limit`: image auto-compress threshold
+- `agents`: agent workspace, role, permissions, provider/model overrides, user isolation, per-agent generation options
 - `shared`: shared skill directory
-- `tools`: backend_call and session tool settings
-- `memory`: short-term, medium-term, long-term, core memory, bootstrap limits
-- `heartbeat`: periodic prompt settings
+- `llm`: default provider, default model, provider definitions, model options
+- `channels`: webchat, weixin, wecom, or plugin-provided channel bindings
+- `plugins`: plugin websocket server and plugin definitions
+- `tools`: backend-call and session tool configuration
+- `memory`: short-term, medium-term, long-term, core memory, and bootstrap limits
+- `heartbeat`: periodic self-check prompt settings
 - `scheduler`: built-in system task schedules
 - `mcp`: local or remote MCP server definitions
-- `plugins`: plugin websocket server and plugin definitions
+- `logging`: runtime logging settings
+- `proxy`: global and per-surface proxy policy
+- `daemon`: daemon control settings
 
-Sensitive fields include `token`, `api_key`, `secret`, passwords, and headers. Never expose secret values in responses. Prefer environment variables such as `${OPENAI_API_KEY}` in config.
+Sensitive fields include `token`, `api_key`, `secret`, passwords, and auth headers. Never expose secret values in responses. Prefer environment variables such as `${OPENAI_API_KEY}` in config.
 
 ## Complete Config Template
 
@@ -66,11 +119,64 @@ gateway:
 
 default_agent: admin-bot
 data_dir: "~/.evoduck"
+tool_result_condense_limit: 50000
+image_auto_compress_limit: 5242880
 
 logging:
   level: INFO # DEBUG, INFO, WARN, ERROR
   json_mode: false
   color: true
+
+proxy:
+  enabled: false
+  type: http # http or socks5
+  http:
+    url: ""
+    username: ""
+    password: "" # Sensitive
+  socks5:
+    url: ""
+    username: ""
+    password: "" # Sensitive
+  no_proxy: []
+  controls:
+    llm:
+      enabled: false
+      providers: {}
+      type: ""
+    channels:
+      default: false
+      per_channel: {}
+      type: ""
+    tools:
+      enabled: false
+      per_tool: {}
+      type: ""
+    mcp:
+      enabled: false
+      per_server: {}
+      type: ""
+    plugin:
+      enabled: false
+      per_plugin: {}
+      type: ""
+    exec:
+      enabled: false
+      per_command: {}
+      type: ""
+    subagents:
+      internal:
+        enabled: null # null means inherit parent process behavior
+      external:
+        enabled: false
+        per_agent: {}
+        type: ""
+    update:
+      enabled: false
+      type: ""
+
+daemon:
+  control_port: 18791
 
 llm:
   default_provider: openai-compatible
@@ -83,7 +189,24 @@ llm:
       headers: {}
       default_model: gpt-4o
       models:
-        - gpt-4o
+        - id: gpt-4o
+          name: gpt-4o
+          type: chat
+          capabilities:
+            vision: true
+            reasoning: false
+            tool_use: true
+          context_window: 128000
+          max_output_tokens: 16384
+        - id: text-embedding-3-small
+          name: text-embedding-3-small
+          type: embedding
+          capabilities:
+            vision: false
+            reasoning: false
+            tool_use: false
+          context_window: 8192
+          max_output_tokens: 0
       tool_choice: auto # auto, none, required, or a specific tool/function name
       parallel_tool_calls: true
       response_format:
@@ -92,7 +215,7 @@ llm:
       presence_penalty: 0
       frequency_penalty: 0
       max_completion_tokens: 0 # 0 means omit provider request field
-      reasoning_effort: "" # provider-specific, e.g. low, medium, high
+      reasoning_effort: "" # provider-specific
       verbosity: "" # provider-specific
       user: ""
       safety_identifier: ""
@@ -106,45 +229,104 @@ llm:
       metadata: {}
       chat_template_kwargs: {}
 
+    deepseek:
+      type: deepseek
+      base_url: https://api.deepseek.com
+      api_key: ${DEEPSEEK_API_KEY}
+      default_model: deepseek-v4-pro
+      thinking:
+        type: enabled
+      reasoning_replay: tool_calls_only
+      models:
+        - id: deepseek-v4-pro
+          name: deepseek-v4-pro
+          type: chat
+          capabilities:
+            vision: false
+            reasoning: true
+            tool_use: true
+          context_window: 128000
+          max_output_tokens: 16384
+
     anthropic:
       type: anthropic
       base_url: https://api.anthropic.com
       api_key: ${ANTHROPIC_API_KEY}
       default_model: claude-sonnet-4-5
       models:
-        - claude-sonnet-4-5
+        - id: claude-sonnet-4-5
+          name: claude-sonnet-4-5
+          type: chat
+          capabilities:
+            vision: true
+            reasoning: true
+            tool_use: true
+          context_window: 200000
+          max_output_tokens: 64000
 
     gemini:
       type: gemini
       api_key: ${GEMINI_API_KEY}
       default_model: gemini-2.5-flash
       models:
-        - gemini-2.5-flash
+        - id: gemini-2.5-flash
+          name: gemini-2.5-flash
+          type: chat
+          capabilities:
+            vision: true
+            reasoning: true
+            tool_use: true
+          context_window: 1048576
+          max_output_tokens: 65536
 
     ollama:
       type: ollama
       base_url: http://localhost:11434/v1
       default_model: qwen2.5
       models:
-        - qwen2.5
+        - id: qwen2.5
+          name: qwen2.5
+          type: chat
+          capabilities:
+            vision: true
+            reasoning: true
+            tool_use: true
+          context_window: 128000
+          max_output_tokens: 8192
 
     bedrock:
       type: bedrock
       default_model: anthropic.claude-3-5-sonnet-20240620-v1:0
-      models:
-        - anthropic.claude-3-5-sonnet-20240620-v1:0
       metadata:
         region: us-east-1
         profile: default
+      models:
+        - id: anthropic.claude-3-5-sonnet-20240620-v1:0
+          name: anthropic.claude-3-5-sonnet-20240620-v1:0
+          type: chat
+          capabilities:
+            vision: true
+            reasoning: true
+            tool_use: true
+          context_window: 200000
+          max_output_tokens: 8192
 
     vertex-ai:
       type: vertex-ai
       default_model: gemini-2.5-flash
-      models:
-        - gemini-2.5-flash
       metadata:
         project: your-gcp-project
         location: us-central1
+      models:
+        - id: gemini-2.5-flash
+          name: gemini-2.5-flash
+          type: chat
+          capabilities:
+            vision: true
+            reasoning: true
+            tool_use: true
+          context_window: 1048576
+          max_output_tokens: 65536
 
 agents:
   admin-bot:
@@ -155,6 +337,8 @@ agents:
     permissions:
       authorized_directories: [] # Empty means role/workspace defaults.
       authorized_tools: [] # Empty means default tool set for role.
+      authorized_subagents: [] # Admin may use * to allow all internal subagents.
+      authorized_external_subagents: []
     user_isolation:
       auto_create: true
       auto_profile: true
@@ -198,7 +382,7 @@ tools:
         url: https://api.example.com/items
         method: GET
         auth:
-          type: bearer # Tool-specific string; commonly bearer, header, or none.
+          type: bearer
           token: ${EXAMPLE_API_TOKEN}
           header: Authorization
         allowed_roles:
@@ -209,7 +393,7 @@ tools:
   session:
     enabled: true
     visibility:
-      employee: user # user or self policy; see session tool policy behavior
+      employee: user # user or self
       customer: self
     allow:
       employee:
@@ -324,82 +508,117 @@ mcp:
 - `gateway.port`: integer. Listener port. Default is `18789`. Must be `1..65535`. Restart required.
 - `gateway.token`: string. Sensitive gateway auth token. Restart required for listener/auth behavior to be safely refreshed.
 
-### `default_agent` And `data_dir`
+### `default_agent`, `data_dir`, Tool Result/Image Limits
 
 - `default_agent`: string. Agent id used when a request does not explicitly select an agent. Config reload can update gateway/router default behavior where wired, but verify in runtime.
-- `data_dir`: string path. Runtime data root for agents, users, sessions, scheduler, logs, and knowledge. Changing this after startup should be treated as restart-required.
+- `data_dir`: string path. Runtime data root for agents, users, sessions, scheduler state, subagents, and knowledge. Changing this after startup should be treated as restart-required.
+- `tool_result_condense_limit`: integer. Threshold for large tool-result condensation behavior. Treat as runtime-behavior config and verify after reload.
+- `image_auto_compress_limit`: integer. Threshold for automatic image compression behavior. Treat as runtime-behavior config and verify after reload.
 
 ### `logging`
 
 - `logging.level`: enum `DEBUG`, `INFO`, `WARN`, `ERROR`. Runtime reloadable.
 - `logging.json_mode`: bool. Runtime reloadable.
 - `logging.color`: bool. Runtime reloadable.
-- Environment override: `LOG_LEVEL`, `LOG_JSON_MODE`, and `LOG_COLOR` can override or influence runtime logging behavior.
+- Environment override paths may still influence runtime logging behavior.
+
+### `proxy`
+
+Global proxy:
+- `proxy.enabled`: bool. Master proxy switch.
+- `proxy.type`: string. Common values are `http` or `socks5`.
+- `proxy.http.url`, `proxy.socks5.url`: proxy endpoints.
+- `proxy.http.username`, `proxy.http.password`, `proxy.socks5.username`, `proxy.socks5.password`: optional credentials. Sensitive.
+- `proxy.no_proxy`: list of bypass hostnames or domains.
+
+Fine-grained proxy controls:
+- `proxy.controls.llm`: provider call proxy policy, including `enabled`, optional `providers`, and optional `type` override.
+- `proxy.controls.channels`: default and per-channel proxy policy.
+- `proxy.controls.tools`: default and per-tool proxy policy.
+- `proxy.controls.mcp`: default and per-server proxy policy for MCP calls and MCP subprocess startup.
+- `proxy.controls.plugin`: default and per-plugin proxy policy for plugin calls and subprocess startup.
+- `proxy.controls.exec`: default and per-command proxy policy for exec commands.
+- `proxy.controls.subagents.internal.enabled`: `null` means inherit parent process behavior.
+- `proxy.controls.subagents.external`: default and per-agent proxy policy for external subagents.
+- `proxy.controls.update`: proxy policy for update commands.
+
+Proxy policy changes should be treated as runtime-sensitive and verified carefully; process-startup or integration-surface changes are safest with restart.
+
+### `daemon`
+
+- `daemon.control_port`: integer. Daemon control port. Default behavior is gateway port plus `2` when omitted by runtime defaults. Treat listener changes as restart-required.
 
 ### `llm`
 
-- `llm.default_provider`: string key under `llm.providers`. Must exist. Active agents usually require restart/re-registration to switch.
-- `llm.default_model`: string. Must be listed under the default provider's `models`. Active agents usually require restart/re-registration to switch.
-- `llm.providers`: map of provider names to provider configs. Static provider changes usually require restart because the LLM registry is built at startup.
+- `llm.default_provider`: string key under `llm.providers`. Must exist.
+- `llm.default_model`: string. Must be declared under the default provider's `models`.
+- `llm.providers`: map of provider names to provider configs.
 
 Provider fields:
 - `type`: provider type. Required.
 - `base_url`: string. Required for OpenAI-compatible preset types and many compatible providers.
 - `api_key`: string. Sensitive. May be a literal or `${ENV_VAR}`.
-- `headers`: map string to string. Sensitive as a group in UI masking. Useful for provider-specific auth or routing headers.
+- `headers`: map string to string. Sensitive as a group in UI masking.
 - `default_model`: string. Required and must be present in `models`.
-- `models`: list of strings. Required non-empty.
+- `models`: list of model objects. Each item includes:
+  - `id`: required unique request model id
+  - `name`: required display name
+  - `type`: required, one of `chat`, `embedding`, `rerank`
+  - `capabilities`: chat-capability flags such as `vision`, `reasoning`, and `tool_use`
+  - `context_window`: integer, must not be negative
+  - `max_output_tokens`: integer, must not be negative
 - `tool_choice`: string. `auto`, `none`, `required`, or a specific tool/function name.
-- `parallel_tool_calls`: nullable bool. When set, forwards parallel tool call preference to compatible providers.
+- `thinking`: currently supported only for provider type `deepseek`, with `type` `enabled` or `disabled`.
+- `parallel_tool_calls`: nullable bool.
 - `response_format`: map. Common `type` values are `text`, `json_object`, and `json_schema`.
 - `stop`: list of stop strings.
-- `presence_penalty`: nullable number. Provider-specific numeric range.
-- `frequency_penalty`: nullable number. Provider-specific numeric range.
+- `presence_penalty`, `frequency_penalty`: nullable numbers.
 - `max_completion_tokens`: integer. If `0`, omitted from provider request.
-- `reasoning_effort`: string. Provider-specific, commonly `low`, `medium`, or `high`.
+- `reasoning_effort`: string. Provider-specific.
+- `reasoning_replay`: currently supported only by `deepseek`; allowed values are `none`, `tool_calls_only`, or `all`.
 - `verbosity`: string. Provider-specific.
-- `user`: string. Forwarded as provider user identifier where supported.
-- `safety_identifier`: string. Forwarded to compatible providers where supported.
-- `service_tier`: string. Provider-specific service tier.
+- `user`, `user_id`, `safety_identifier`, `service_tier`: provider-specific routing or safety fields.
 - `n`: integer. If `0`, omitted.
 - `seed`: nullable integer.
 - `logprobs`: bool.
-- `top_logprobs`: integer. If greater than `0`, also enables `logprobs` for compatible requests.
+- `top_logprobs`: integer.
 - `store`: nullable bool.
-- `include_usage`: nullable bool. Available in config; provider support depends on implementation.
+- `include_usage`: nullable bool.
 - `metadata`: map string to string.
-- `chat_template_kwargs`: map string to any. Forwarded to compatible providers where supported.
+- `chat_template_kwargs`: map string to any.
 
 ### `agents`
 
-- `agents.<id>.role`: enum `admin`, `employee`, `customer`. Required. Controls tool access and skill role checks.
-- `agents.<id>.workspace`: string path. Required and must be creatable. Agent prompt scaffold files live here.
-- `agents.<id>.permissions.authorized_directories`: list of paths. Empty means default role/workspace permissions. Empty string entries are invalid.
-- `agents.<id>.permissions.authorized_tools`: list of tool names. Empty means default tool set for the role. If non-empty, tool registration is filtered through this allowlist. Empty string entries are invalid.
-- `agents.<id>.provider`: provider name. Must exist in `llm.providers` after defaults are applied.
-- `agents.<id>.model`: model name. If non-empty, must be declared under the selected provider's `models`.
-- `agents.<id>.user_isolation.auto_create`: bool. Defaults to true when omitted/false at runtime defaulting.
-- `agents.<id>.user_isolation.auto_profile`: bool. Defaults to true when omitted/false at runtime defaulting.
-- `agents.<id>.temperature`: nullable number. Agent-level LLM option.
-- `agents.<id>.max_tokens`: integer. Agent-level LLM option. `0` means omit/default.
-- `agents.<id>.top_p`: nullable number. Agent-level LLM option.
-- `agents.<id>.max_iterations`: integer. Defaults to `100` if `0` or negative.
+- `agents.<id>.role`: enum `admin`, `employee`, `customer`. Required.
+- `agents.<id>.workspace`: string path. Required and must be creatable.
+- `agents.<id>.permissions.authorized_directories`: list of paths. Empty means default role/workspace permissions.
+- `agents.<id>.permissions.authorized_tools`: list of tool names. Empty means default tool set for the role.
+- `agents.<id>.permissions.authorized_subagents`: list of internal subagent ids. Empty string entries are invalid. `*` is only allowed for admin agents. `experience-curator` requires admin role.
+- `agents.<id>.permissions.authorized_external_subagents`: list of external subagent names. Empty string entries are invalid.
+- `agents.<id>.provider`: provider name. Must exist in `llm.providers`.
+- `agents.<id>.model`: model name. If non-empty, must be declared under that provider's `models`.
+- `agents.<id>.user_isolation.auto_create`: bool.
+- `agents.<id>.user_isolation.auto_profile`: bool.
+- `agents.<id>.temperature`: nullable number.
+- `agents.<id>.max_tokens`: integer. `0` means omit/default.
+- `agents.<id>.top_p`: nullable number.
+- `agents.<id>.max_iterations`: integer. Runtime defaults apply when non-positive.
 
 Agent registration changes, roles, permissions, workspaces, provider/model choices, and LLM options should be treated as restart-required for active agents.
 
 ### `channels`
 
-- `channels.<id>.type`: string. Built-ins include `webchat`, `weixin`, and `wecom`; plugins can define more. `webchat` is reserved for the gateway web layer.
+- `channels.<id>.type`: string. Built-ins include `webchat`, `weixin`, and `wecom`; plugins can define more.
 - `channels.<id>.name`: string display name.
-- `channels.<id>.role`: enum `admin`, `employee`, `customer`. Required by validation semantics.
+- `channels.<id>.role`: enum `admin`, `employee`, `customer`.
 - `channels.<id>.agent`: string agent id. If non-empty, must reference an existing configured agent.
-- `channels.<id>.token`: string. Sensitive. Used by Weixin and possibly plugin channels.
+- `channels.<id>.token`: string. Sensitive. Used by Weixin and some plugin channels.
 - `channels.<id>.user_id`: string. Weixin account user id.
-- `channels.<id>.api_base_url`: string. Weixin API base URL. Empty uses the built-in default.
+- `channels.<id>.api_base_url`: string. Weixin API base URL. Empty uses built-in defaults.
 - `channels.<id>.bot_id`: string. WeCom AI Bot id.
 - `channels.<id>.secret`: string. Sensitive. WeCom AI Bot secret.
 
-Channel config may be rebuilt by config reload, but connection-level changes can require reconnect or service restart. Treat new channel types from plugins as restart-required unless a supported hot path is known.
+Channel config may be rebuilt by config reload, but connection-level changes can require reconnect or restart. Treat new channel types from plugins as restart-required unless a supported hot path is known.
 
 ### `shared`
 
@@ -407,7 +626,7 @@ Channel config may be rebuilt by config reload, but connection-level changes can
 
 ### `tools.backend_call`
 
-- `tools.backend_call.endpoints`: map of endpoint names. If empty, `backend_call` is not registered.
+- `tools.backend_call.endpoints`: map of endpoint names. If empty, `backend_call` may not be registered.
 - `url`: endpoint URL.
 - `method`: HTTP method string.
 - `auth.type`: auth mode string interpreted by the backend_call tool.
@@ -415,15 +634,15 @@ Channel config may be rebuilt by config reload, but connection-level changes can
 - `auth.header`: auth header name.
 - `allowed_roles`: list of roles allowed to call the endpoint.
 - `rate_limit`: integer request limit used by the tool implementation.
-- `timeout`: Go duration, e.g. `30s`, `1m`.
+- `timeout`: Go duration, such as `30s` or `1m`.
 
 Backend endpoint additions or removals affect tool registration and should be treated as restart-required for active agents.
 
 ### `tools.session`
 
 - `enabled`: bool. Enables session tools policy.
-- `visibility.employee`: string policy for employee role, commonly `user`.
-- `visibility.customer`: string policy for customer role, commonly `self`.
+- `visibility.employee`: string policy for employee role.
+- `visibility.customer`: string policy for customer role.
 - `allow.employee`: list of session tool names allowed for employee role.
 - `allow.customer`: list of session tool names allowed for customer role.
 
@@ -431,69 +650,69 @@ Session tool availability is determined by role, policy, explicit agent tool all
 
 ### `memory.short_term`
 
-- `max_messages`: integer. Default `200`. Must be at least `1`.
-- `max_tokens`: integer. Default `128000`. Must be at least `100`.
-- `keep_recent`: integer. Default `10`. Must not be negative.
-- `session_ttl`: duration. Default `168h`.
-- `cleanup_interval`: duration. Default `1h`.
-- `flush_before_compact`: bool. If true, attempts memory flush before compaction.
+- `max_messages`: integer. Must be at least `1`.
+- `max_tokens`: integer. Must be at least `100`.
+- `keep_recent`: integer. Must not be negative.
+- `session_ttl`: duration.
+- `cleanup_interval`: duration.
+- `flush_before_compact`: bool.
 
 ### `memory.medium_term`
 
-- `dir`: string. Default `memory`.
-- `max_size`: integer. Default `5000`. Must be at least `100`.
-- `load_days`: integer. Default `7`.
-- `min_messages_to_extract`: integer. Default `5`.
-- `compression_threshold`: integer. Default `10000`.
+- `dir`: string.
+- `max_size`: integer. Must be at least `100`.
+- `load_days`: integer.
+- `min_messages_to_extract`: integer.
+- `compression_threshold`: integer.
 
 ### `memory.long_term`
 
-- `vector.enabled`: bool. Enables vector memory search/index behavior.
-- `vector.embedder.type`: string. Required when vector is enabled.
+- `vector.enabled`: bool.
+- `vector.embedder.type`: required when vector memory is enabled.
 - `vector.embedder.model`: string.
 - `vector.embedder.dimensions`: integer.
-- `vector.embedder.api_key`: sensitive string. If omitted, embedder may inherit provider settings depending on implementation.
+- `vector.embedder.api_key`: sensitive string.
 - `vector.embedder.base_url`: string.
-- `vector.prefetch_limit`: integer. Default `5`. Must be at least `1` when vector is enabled.
-- `vector.score_threshold`: number. Default `0.7`. Must be between `0` and `1` when vector is enabled.
-- `dedup_threshold`: number. Default `0.95`.
-- `cleanup_policy.check_interval`: duration. Default `24h`.
-- `cleanup_policy.min_age_days`: integer. Default `30`.
-- `cleanup_policy.batch_size`: integer. Default `30`.
-- `cleanup_policy.reference.medium_memory_days`: integer. Default `7`.
+- `vector.prefetch_limit`: integer. Must be at least `1` when vector memory is enabled.
+- `vector.score_threshold`: number. Must be between `0` and `1` when vector memory is enabled.
+- `dedup_threshold`: number.
+- `cleanup_policy.check_interval`: duration.
+- `cleanup_policy.min_age_days`: integer.
+- `cleanup_policy.batch_size`: integer.
+- `cleanup_policy.reference.medium_memory_days`: integer.
 - `cleanup_policy.reference.include_core_memory`: bool.
 - `cleanup_policy.reference.include_access_stats`: bool.
-- `compression_threshold`: integer. Default `15000`.
+- `compression_threshold`: integer.
 
 ### `memory.core_memory` And `memory.bootstrap`
 
-- `core_memory.file`: string. Default `MEMORY.md`.
+- `core_memory.file`: string. Default is usually `MEMORY.md`.
 - `core_memory.auto_consolidate`: bool.
-- `core_memory.importance_threshold`: number. Default `0.9`.
-- `bootstrap.max_file_chars`: integer. Default `20000`.
-- `bootstrap.max_total_chars`: integer. Default `150000`.
-- `bootstrap.warning_threshold`: number. Default `0.8`.
-- `bootstrap.truncation_strategy`: string. Default `head`. Code comments mention `head` and `tail`.
+- `core_memory.importance_threshold`: number.
+- `bootstrap.max_file_chars`: integer.
+- `bootstrap.max_total_chars`: integer.
+- `bootstrap.warning_threshold`: number.
+- `bootstrap.truncation_strategy`: string. Common values are `head` and `tail`.
 
 ### `heartbeat` And `scheduler`
 
 - `heartbeat.enabled`: bool.
-- `heartbeat.interval`: duration. Default `30m`.
+- `heartbeat.interval`: duration.
 - `heartbeat.prompt`: string.
-- `scheduler.system_tasks.memory_curation.schedule`: cron expression. Default `0 */3 * * *`. Must parse as standard cron.
-- `scheduler.system_tasks.experience_curation.schedule`: cron expression. Default `0 3 * * *`. Must parse as standard cron.
+- `scheduler.system_tasks.memory_curation.schedule`: cron expression. Must parse as standard cron.
+- `scheduler.system_tasks.experience_curation.schedule`: cron expression. Must parse as standard cron.
 
 ### `plugins`
 
-- `plugins.ws_server.host`: string. Default `127.0.0.1`.
-- `plugins.ws_server.port`: integer. Default `19000`. Must be `0..65535`.
-- `plugins.plugins.<name>.enabled`: bool. Disabled plugins skip most validation.
-- `plugins.plugins.<name>.type`: enum `local`, `remote` when enabled.
+- `plugins.ws_server.host`: string.
+- `plugins.ws_server.port`: integer. Must be `0..65535`.
+- `plugins.plugins.<name>.enabled`: bool.
+- `plugins.plugins.<name>.type`: `local` or `remote` when enabled.
 - `plugins.plugins.<name>.command`: list of strings. Required for enabled local plugins.
 - `plugins.plugins.<name>.environment`: map string to string.
 - `plugins.plugins.<name>.url`: string. Required for enabled remote plugins.
 - `plugins.plugins.<name>.token`: sensitive string.
-- `plugins.plugins.<name>.restart`: enum `always`, `on-failure`, `never`, or empty.
+- `plugins.plugins.<name>.restart`: `always`, `on-failure`, `never`, or empty.
 - `plugins.plugins.<name>.restart_delay`: integer. Must not be negative.
 - `plugins.plugins.<name>.max_restarts`: integer. Must not be negative.
 - `plugins.plugins.<name>.override`: bool.
@@ -505,7 +724,7 @@ Plugin process definitions, websocket server settings, and plugin capabilities s
 
 ### `mcp`
 
-- `mcp.servers.<name>.type`: enum `local` or `remote`.
+- `mcp.servers.<name>.type`: `local` or `remote`.
 - `mcp.servers.<name>.enabled`: bool.
 - `mcp.servers.<name>.command`: list of strings. Used by local MCP servers.
 - `mcp.servers.<name>.environment`: map string to string. `MEMORY_FILE_PATH` is normalized as a path if present.
@@ -517,7 +736,7 @@ MCP server process and connection changes normally require service restart to fu
 
 ## Provider Type Reference
 
-Direct registry provider types:
+Direct registry provider types include:
 - `openai`
 - `openai-compatible`
 - `openai-responses-compatible`
@@ -530,10 +749,8 @@ Direct registry provider types:
 - `vertex-ai`
 - `azure`
 
-Preset provider types that are normalized to OpenAI-compatible behavior when initialized:
+Preset provider types normalized to OpenAI-compatible behavior at initialization include many catalog entries such as:
 - `deepseek`
-- `minimax`
-- `minimax-cn`
 - `openrouter`
 - `dashscope`
 - `dashscope-cn`
@@ -570,90 +787,98 @@ Preset provider types that are normalized to OpenAI-compatible behavior when ini
 - `akle`
 - `kilo`
 - `opencode`
-- `lmstudio`
-- `vllm`
-- `litellm`
+- additional compatible presets from the provider catalog
 
-Provider environment validation rules:
-- `openai`: needs `api_key` or `OPENAI_API_KEY`.
-- `anthropic`: needs `api_key` or `ANTHROPIC_API_KEY`.
-- `gemini`: needs `api_key`, `GEMINI_API_KEY`, or `GOOGLE_API_KEY`.
-- OpenAI-compatible and preset providers: need non-empty `base_url`.
-- `bedrock`: needs `metadata.region`, `AWS_REGION`, or `AWS_DEFAULT_REGION`.
-- `vertex-ai`: needs `metadata.project` or `GOOGLE_CLOUD_PROJECT`, and needs `metadata.location`, `metadata.region`, `GOOGLE_CLOUD_LOCATION`, or `GOOGLE_CLOUD_REGION`.
-- `ollama`: no API key environment validation.
+Provider environment validation rules currently include:
+- `openai`: needs `api_key` or `OPENAI_API_KEY`
+- `anthropic`: needs `api_key` or `ANTHROPIC_API_KEY`
+- `gemini`: needs `api_key`, `GEMINI_API_KEY`, or `GOOGLE_API_KEY`
+- OpenAI-compatible and preset providers: need non-empty `base_url`
+- `bedrock`: needs `metadata.region`, `AWS_REGION`, or `AWS_DEFAULT_REGION`
+- `vertex-ai`: needs project and location/region metadata or matching Google Cloud env vars
+- `ollama`: no API key environment validation
 
 ## Validation Rules
 
-Current config validation enforces:
-- `gateway.port` must be between `1` and `65535`.
-- `gateway.host` cannot be empty.
-- At least one agent must be configured.
-- Agent `role` must be `admin`, `employee`, or `customer`.
-- Agent `workspace` cannot be empty and must be creatable.
-- Agent permission entries cannot be empty strings.
-- `llm.default_provider` and `llm.default_model` cannot be empty.
-- `llm.default_provider` must exist in `llm.providers`.
-- `llm.default_model` must be declared under the default provider's `models`.
-- Every provider needs non-empty `type`, non-empty `default_model`, and at least one `models` entry.
-- Provider `default_model` must exist in provider `models`.
-- Every agent provider must exist in `llm.providers`.
-- Every non-empty agent model must be declared under that agent's provider.
-- `memory.short_term.max_messages` must be at least `1`.
-- `memory.short_term.max_tokens` must be at least `100`.
-- `memory.short_term.keep_recent` cannot be negative.
-- `memory.medium_term.max_size` must be at least `100`.
-- If vector memory is enabled, `memory.long_term.vector.embedder.type` is required.
-- If vector memory is enabled, `memory.long_term.vector.prefetch_limit` must be at least `1`.
-- If vector memory is enabled, `memory.long_term.vector.score_threshold` must be between `0` and `1`.
-- Built-in scheduler cron expressions cannot be empty and must parse as standard cron.
-- Channel `role` must be `admin`, `employee`, or `customer`.
-- Non-empty channel `agent` must reference an existing configured agent.
-- `plugins.ws_server.port` must be between `0` and `65535`.
-- Enabled plugin `type` must be `local` or `remote`.
-- Enabled local plugins require `command`.
-- Enabled remote plugins require `url`.
-- Plugin `restart`, when set, must be `always`, `on-failure`, or `never`.
-- Plugin restart and timeout numeric fields cannot be negative.
-- Plugin capabilities must be `tool`, `provider`, `channel`, or `hook`.
+Current config validation enforces at least:
+- `gateway.port` must be between `1` and `65535`
+- `gateway.host` cannot be empty
+- at least one agent must be configured
+- agent `role` must be `admin`, `employee`, or `customer`
+- agent `workspace` cannot be empty and must be creatable
+- agent permission entries cannot be empty strings
+- wildcard internal subagent authorization is admin-only
+- `experience-curator` internal subagent authorization requires admin role
+- external subagent names cannot be empty strings
+- `llm.default_provider` and `llm.default_model` cannot be empty
+- `llm.default_provider` must exist in `llm.providers`
+- `llm.default_model` must be declared under the default provider's `models`
+- every provider needs non-empty `type`, non-empty `default_model`, and at least one `models` entry
+- every model entry needs non-empty `id` and `name`
+- model `type` must be `chat`, `embedding`, or `rerank`
+- model `context_window` and `max_output_tokens` cannot be negative
+- provider `default_model` must exist in provider `models`
+- `thinking` and `reasoning_replay` currently have `deepseek`-specific restrictions
+- every agent provider must exist in `llm.providers`
+- every non-empty agent model must be declared under that agent's provider
+- `memory.short_term.max_messages` must be at least `1`
+- `memory.short_term.max_tokens` must be at least `100`
+- `memory.short_term.keep_recent` cannot be negative
+- `memory.medium_term.max_size` must be at least `100`
+- if vector memory is enabled, embedder type is required
+- if vector memory is enabled, `prefetch_limit` must be at least `1`
+- if vector memory is enabled, `score_threshold` must be between `0` and `1`
+- built-in scheduler cron expressions cannot be empty and must parse as standard cron
+- channel `role` must be `admin`, `employee`, or `customer`
+- non-empty channel `agent` must reference an existing configured agent
+- `plugins.ws_server.port` must be between `0` and `65535`
+- enabled plugin `type` must be `local` or `remote`
+- enabled local plugins require `command`
+- enabled remote plugins require `url`
+- plugin `restart`, when set, must be `always`, `on-failure`, or `never`
+- plugin restart and timeout numeric fields cannot be negative
+- plugin capabilities must be `tool`, `provider`, `channel`, or `hook`
 
 ## Reload Matrix
 
 Use `system_reload` when available and the current role is admin.
 
 Reload scopes:
-- `skills`: reloads `SKILL.md` files into each active agent's in-memory skill loader.
-- `config`: reloads config from disk and applies the runtime-safe subset through the gateway reload path.
-- `all`: reloads config, restores system scaffolds, and reloads skills.
+- `skills`: reloads `SKILL.md` files into each active agent's in-memory skill loader
+- `config`: reloads config from disk and applies the runtime-safe subset through the gateway reload path
+- `all`: reloads config, restores system scaffolds, and reloads skills
 
 Usually effective after `system_reload scope="skills"`:
-- Creating a new shared or agent-local `SKILL.md`.
-- Editing an existing skill body, description, license, compatibility, metadata, tags, or role restriction.
+- creating a new shared or agent-local `SKILL.md`
+- editing an existing skill body, description, license, compatibility, metadata, tags, or role restriction
 
 Usually effective after `system_reload scope="config"` or `scope="all"`:
-- `logging` settings.
-- `default_agent` in gateway/router paths that read the refreshed config.
-- `memory` settings used by newly built prompts/runtime flows.
-- `scheduler.system_tasks` registration.
-- Some `channels` rebuild behavior handled by the gateway reload path.
+- `logging` settings
+- `default_agent` in gateway/router paths that read the refreshed config
+- `memory` settings used by newly built prompts/runtime flows
+- `scheduler.system_tasks` registration
+- some `channels` rebuild behavior handled by the gateway reload path
+- some general runtime behavior fields such as tool-result/image thresholds when the current runtime path consumes them dynamically
 
 Usually requires service restart or agent re-registration to fully apply:
-- `gateway.host`, `gateway.port`, and gateway token listener/auth behavior.
-- Agent definitions, roles, workspaces, permissions, provider/model selection, and LLM generation options already bound to active agents.
-- LLM provider definitions and default provider/model used by already registered agents.
-- Tool registration changes controlled by `tools`.
-- `backend_call` endpoint additions/removals that affect whether the tool is registered.
-- MCP server additions, removals, command changes, headers, or enabled state.
-- Plugin websocket server and plugin process definitions.
-- `data_dir` and `shared.skills_dir` path changes for already initialized managers.
+- `gateway.host`, `gateway.port`, gateway token listener/auth behavior
+- `daemon.control_port`
+- `data_dir` and `shared.skills_dir` path changes for already initialized managers
+- agent definitions, roles, workspaces, permissions, provider/model selection, and LLM generation options already bound to active agents
+- LLM provider definitions and default provider/model used by already registered agents
+- proxy changes that affect process startup or integration surfaces
+- tool registration changes controlled by `tools`
+- backend endpoint additions/removals that affect whether a tool is registered
+- MCP server additions, removals, command changes, headers, or enabled state
+- plugin websocket server and plugin process definitions
 
-If a change touches active providers, tools, MCP, plugins, agent workspaces, or process listening addresses, tell the user a restart is the safe path even if `system_reload config` validates the file.
+If a change touches active providers, tools, MCP, plugins, proxy behavior, agent workspaces, daemon/listener ports, or process listening addresses, tell the user a restart is the safe path even if `system_reload config` validates the file.
 
 ## Skills
 
 Skill locations:
-- Agent-local: `<agent-workspace>/skills/<skill-name>/SKILL.md`
-- Shared: `<shared.skills_dir>/<skill-name>/SKILL.md`
+- agent-local: `<agent-workspace>/skills/<skill-name>/SKILL.md`
+- shared: `<shared.skills_dir>/<skill-name>/SKILL.md`
 
 Skill file format:
 
@@ -675,14 +900,21 @@ Instructions for the agent.
 ```
 
 Rules:
-- Use `skill_list` before creating a new skill.
-- Use `skill_detail` on likely matches before editing or creating.
-- Prefer updating an existing close skill over creating overlapping skills.
-- Do not use `parameters` or template-style double-brace placeholders; skills are plain Markdown instruction packages.
-- Use `metadata.evoduck.role` for role restriction and `metadata.evoduck.tags` for tags.
-- Use supporting files such as `examples/` or `templates/` for long reference material.
-- After writing or editing `SKILL.md`, call `system_reload` with `scope="skills"` and verify with `skill_detail`.
-- Built-in skills are copied into the shared skill directory only when missing; user edits are preserved.
+- use `skill_list` before creating a new skill
+- use `skill_detail` on likely matches before editing or creating
+- prefer updating an existing close skill over creating overlapping skills
+- `SKILL.md` is the runtime entrypoint; support files are optional
+- use `metadata.evoduck.role` for role restriction and `metadata.evoduck.tags` for tags
+- avoid deprecated frontmatter such as top-level `tags`, `parameters`, legacy `requires.role`, or template-style placeholders
+- after writing or editing `SKILL.md`, call `system_reload` with `scope="skills"` and verify with `skill_detail`
+- built-in skills are copied into the shared skill directory only when missing; user edits are preserved
+
+Useful CLI commands:
+- `evoduck skills list`
+- `evoduck skills detail <skill-name>`
+- `evoduck skills verify <skill-name>`
+- `evoduck skills install <path-or-zip>`
+- `evoduck skills pack <path>`
 
 ## Memory
 
@@ -691,9 +923,12 @@ Use memory tools for user-specific memory and agent bootstrap files. The tools r
 Agent bootstrap paths:
 - `AGENTS.md`: agent operating rules
 - `SOUL.md`: agent identity, mission, tone, and durable boundaries
-- `TOOLS.md`, `IDENTITY.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`: additional agent bootstrap files
+- `TOOLS.md`, `IDENTITY.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`: additional agent bootstrap files when those roles are established
 
-Use user memory for user-specific durable context, not global project knowledge.
+Default scaffold creation currently ensures:
+- `AGENTS.md`
+- `SOUL.md`
+- user-isolated `users/USER.md` when user scaffolds are created
 
 Writable user memory paths:
 - `USER.md`: user profile and preferences
@@ -701,41 +936,43 @@ Writable user memory paths:
 - `memory/YYYY-MM-DD.md`: user-specific daily medium-term memory
 
 Memory write rules:
-- Use `memory_read` or `memory_search` before editing when possible.
-- Use `memory_write` to create or overwrite allowed agent bootstrap or user memory files.
-- Use `memory_edit` for append, prepend, or exact text replacement.
-- `USER.md`, `MEMORY.md`, and `memory/YYYY-MM-DD.md` route to the user memory directory.
-- `AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `HEARTBEAT.md`, and `BOOTSTRAP.md` route to the agent workspace.
-- Admin and system curator contexts can target `user_id`; ordinary contexts should use the current user context.
-- Do not store secrets, unconfirmed guesses, transient tool traces, or one-off task details as durable memory.
+- use `memory_read` or `memory_search` before editing when possible
+- use `memory_write` to create or overwrite allowed agent bootstrap or user memory files
+- use `memory_edit` for append, prepend, or exact text replacement
+- `USER.md`, `MEMORY.md`, and `memory/YYYY-MM-DD.md` route to the user memory directory
+- bootstrap files route to the agent workspace
+- admin and system curator contexts can target `user_id`; ordinary contexts should use the current user context
+- do not store secrets, unconfirmed guesses, transient tool traces, or one-off task details as durable memory
 
-Use shared knowledge instead of memory for reusable project, architecture, runbook, or domain facts that should apply across users.
+Use shared knowledge instead of user memory for reusable project, architecture, runbook, or domain facts that should apply across users.
 
 ## Knowledge
 
 Use knowledge tools for shared reusable information under the shared knowledge base.
 
 Workflow:
-- Use `knowledge_tree` to discover entries.
-- Use `knowledge_search` for likely related content.
-- Use `knowledge_read` before editing an existing entry.
-- Use `knowledge_write`, `knowledge_edit`, or `knowledge_delete` only when available and appropriate for the role.
-- Prefer updating an existing entry over creating duplicates.
+- use `knowledge_tree` to discover entries
+- use `knowledge_search` for likely related content
+- use `knowledge_read` before editing an existing entry
+- use `knowledge_write`, `knowledge_edit`, or `knowledge_delete` only when available and appropriate for the role
+- prefer updating an existing entry over creating duplicates
 
 Do not put user-specific profile details into shared knowledge.
 
 ## Tools And Capability Boundaries
 
-Available tools depend on role, config, permissions, plugins, MCP, and channel/session context. Always trust the current prompt's tool list over assumptions.
+Available tools depend on role, config, permissions, plugins, MCP, channel context, and session context. Always trust the current prompt's tool list over assumptions.
 
 Common boundaries:
-- Customer role has a smaller tool surface.
-- Employee and admin roles can have file, memory, schedule, HTTP, exec, and knowledge write tools when authorized.
-- `system_reload` is admin-only.
-- `backend_call` exists only when backend endpoints are configured.
-- Session tools depend on `tools.session` config, role policy, and user context.
-- MCP tools appear only after enabled MCP servers initialize successfully.
-- Plugin tools appear only after plugins connect and register capabilities.
+- customer role has a smaller tool surface
+- employee and admin roles can have file, memory, schedule, HTTP, exec, and knowledge write tools when authorized
+- `system_reload` is admin-only
+- `backend_call` exists only when backend endpoints are configured
+- session tools depend on `tools.session` config, role policy, explicit agent tool allowlists, and user context
+- MCP tools appear only after enabled MCP servers initialize successfully
+- plugin tools appear only after plugins connect and register capabilities
+- internal subagent access depends on `authorized_subagents`
+- external subagent access depends on `authorized_external_subagents`
 
 File tools are constrained by authorized directories. If a write fails due to path authorization, inspect agent permissions and use an allowed path instead of trying to escape the sandbox.
 
@@ -774,7 +1011,11 @@ MCP server process and connection changes normally require service restart to fu
 
 Plugins can provide tools, providers, channels, or hooks depending on declared capabilities. Plugin process definitions, websocket server settings, and plugin startup behavior should be treated as restart-required unless the user confirms a supported hot-reload path.
 
-Channels bind external conversations to agents. Webchat is gateway-reserved. Other channel types can be built-in or plugin-defined. Channel config may be re-read by config reload, but connection-level behavior can still require restart or reconnect.
+Channels bind external conversations to agents.
+- `webchat` is the built-in gateway web layer and not a regular external bridge
+- `weixin` uses QR-login-derived credentials and optional account metadata
+- `wecom` uses AI Bot credentials over WebSocket
+- plugin-defined channels follow plugin capability registration and should be treated as restart-sensitive unless proven otherwise
 
 ## Safe Configuration Workflow
 
@@ -787,7 +1028,7 @@ When asked to change EvoDuck configuration:
 5. Preserve unrelated existing user configuration fields.
 6. Run validation when a validation path or config reload is available.
 7. If reloadable, call the correct `system_reload` scope.
-8. Verify with the relevant list/detail/read tool.
+8. Verify with the relevant list, detail, or read path.
 9. Tell the user what changed and whether restart is still needed.
 
 If unsure whether a change is safe to hot-reload, classify it as restart-required.
@@ -795,10 +1036,10 @@ If unsure whether a change is safe to hot-reload, classify it as restart-require
 ## Self-Inspection Checklist
 
 Before answering questions about what you are or what you can do:
-- Check loaded tools in the prompt or with available tool discovery.
-- Check `skill_list` for relevant built-in or shared skills.
-- Read `AGENTS.md` and `SOUL.md` if identity or behavior is unclear.
-- Read config only when needed and avoid printing sensitive fields.
-- Distinguish actual current capabilities from capabilities EvoDuck can support after configuration.
+- check loaded tools in the prompt or with available tool discovery
+- check `skill_list` for relevant built-in or shared skills
+- read `AGENTS.md` and `SOUL.md` if identity or behavior is unclear
+- read config only when needed and avoid printing sensitive fields
+- distinguish actual current capabilities from capabilities EvoDuck can support after configuration
 
-Never claim a configuration, memory, skill, plugin, MCP server, or channel is active until you have verified it from current runtime state or files.
+Never claim a configuration, memory, skill, plugin, MCP server, proxy path, or channel is active until you have verified it from current runtime state or files.
