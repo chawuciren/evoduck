@@ -21,6 +21,26 @@ type Store struct {
 	rootDir string
 }
 
+type StoreInput struct {
+	Path     string
+	Data     string
+	Name     string
+	MimeType string
+	Compress bool
+	MaxBytes int
+}
+
+type StoreResult struct {
+	ID           string `json:"id"`
+	URL          string `json:"url"`
+	Path         string `json:"path"`
+	Name         string `json:"name"`
+	MimeType     string `json:"mime_type,omitempty"`
+	OriginalSize int64  `json:"original_size"`
+	FinalSize    int64  `json:"final_size"`
+	Compressed   bool   `json:"compressed"`
+}
+
 type Record struct {
 	ID         string    `json:"id"`
 	Name       string    `json:"name"`
@@ -177,7 +197,78 @@ func ResolveStoredMedia(store *Store, item models.OutgoingMedia) (models.Outgoin
 	return item, true, nil
 }
 
+func StoreMedia(store *Store, input StoreInput) (*StoreResult, error) {
+	if store == nil {
+		return nil, fmt.Errorf("media store is not configured")
+	}
+	input.Path = strings.TrimSpace(input.Path)
+	input.Data = strings.TrimSpace(input.Data)
+	input.Name = SanitizeName(input.Name)
+	input.MimeType = strings.TrimSpace(input.MimeType)
+	if input.Path == "" && input.Data == "" {
+		return nil, fmt.Errorf("path or data is required")
+	}
+
+	var (
+		data []byte
+		err  error
+	)
+	if input.Data != "" {
+		data, err = base64.StdEncoding.DecodeString(input.Data)
+		if err != nil {
+			return nil, fmt.Errorf("decode media %q: %w", input.Name, err)
+		}
+	} else {
+		data, err = os.ReadFile(input.Path)
+		if err != nil {
+			return nil, fmt.Errorf("read media path %q: %w", input.Path, err)
+		}
+		if input.Name == "" {
+			input.Name = SanitizeName(filepath.Base(input.Path))
+		}
+	}
+	if input.Name == "" {
+		input.Name = "upload"
+	}
+	originalSize := int64(len(data))
+	compressed := false
+	if input.Compress && input.MaxBytes > 0 && IsCompressibleImage(input.MimeType, input.Name) {
+		result, err := CompressImageData(input.Name, input.MimeType, data, input.MaxBytes)
+		if err != nil {
+			return nil, err
+		}
+		data = result.Data
+		if result.MimeType != "" {
+			input.MimeType = result.MimeType
+		}
+		compressed = result.Compressed
+	}
+	stored, err := store.Save(input.Name, input.MimeType, data)
+	if err != nil {
+		return nil, err
+	}
+	return &StoreResult{
+		ID:           stored.ID,
+		URL:          MediaURL(stored.ID),
+		Path:         store.FilePath(stored),
+		Name:         stored.Name,
+		MimeType:     stored.MimeType,
+		OriginalSize: originalSize,
+		FinalSize:    stored.Size,
+		Compressed:   compressed,
+	}, nil
+}
+
+type NormalizeOptions struct {
+	Compress bool
+	MaxBytes int
+}
+
 func NormalizeOutgoingMedia(store *Store, media []models.OutgoingMedia) ([]models.OutgoingMedia, error) {
+	return NormalizeOutgoingMediaWithOptions(store, media, NormalizeOptions{})
+}
+
+func NormalizeOutgoingMediaWithOptions(store *Store, media []models.OutgoingMedia, opts NormalizeOptions) ([]models.OutgoingMedia, error) {
 	if len(media) == 0 {
 		return nil, nil
 	}
@@ -203,36 +294,25 @@ func NormalizeOutgoingMedia(store *Store, media []models.OutgoingMedia) ([]model
 			normalized = append(normalized, clean)
 			continue
 		}
-
-		var (
-			data []byte
-			err  error
-		)
-		if clean.Data != "" {
-			data, err = base64.StdEncoding.DecodeString(clean.Data)
-			if err != nil {
-				return nil, fmt.Errorf("decode media %q: %w", clean.Name, err)
-			}
-		} else {
-			data, err = os.ReadFile(clean.Path)
-			if err != nil {
-				return nil, fmt.Errorf("read media path %q: %w", clean.Path, err)
-			}
-			if clean.Name == "" {
-				clean.Name = SanitizeName(filepath.Base(clean.Path))
-			}
-		}
-		if clean.Name == "" {
-			clean.Name = "upload"
-		}
-		stored, err := store.Save(clean.Name, clean.MimeType, data)
+		stored, err := StoreMedia(store, StoreInput{
+			Path:     clean.Path,
+			Data:     clean.Data,
+			Name:     clean.Name,
+			MimeType: clean.MimeType,
+			Compress: opts.Compress,
+			MaxBytes: opts.MaxBytes,
+		})
 		if err != nil {
-			return nil, err
+			if clean.Data != "" {
+				return nil, fmt.Errorf("store media %q: %w", clean.Name, err)
+			}
+			return nil, fmt.Errorf("store media path %q: %w", clean.Path, err)
 		}
-		clean.URL = MediaURL(stored.ID)
+		clean.URL = stored.URL
+		clean.Name = stored.Name
 		clean.MimeType = stored.MimeType
-		clean.FileSize = stored.Size
-		clean.Path = store.FilePath(stored)
+		clean.FileSize = stored.FinalSize
+		clean.Path = stored.Path
 		clean.Data = ""
 		normalized = append(normalized, clean)
 	}

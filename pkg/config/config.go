@@ -7,22 +7,24 @@ import (
 )
 
 type Config struct {
-	Gateway      GatewayConfig          `yaml:"gateway"`
-	DefaultAgent string                 `yaml:"default_agent"` // 默认 Agent ID
-	DataDir      string                 `yaml:"data_dir"`      // 数据目录 (默认: ./data)
-	Agents       map[string]AgentConfig `yaml:"agents"`
-	Shared       SharedConfig           `yaml:"shared"`
-	LLM          LLMConfig              `yaml:"llm"`
-	Channels     ChannelsConfig         `yaml:"channels"`
-	Plugins      PluginConfig           `yaml:"plugins"`
-	Tools        ToolsConfig            `yaml:"tools"`
-	Memory       MemoryConfig           `yaml:"memory"`
-	Heartbeat    HeartbeatConfig        `yaml:"heartbeat"`
-	Scheduler    SchedulerConfig        `yaml:"scheduler"`
-	MCP          MCPConfig              `yaml:"mcp"`     // MCP 服务器配置
-	Logging      LoggingConfig          `yaml:"logging"` // 日志配置
-	Proxy        ProxyConfig            `yaml:"proxy"`   // 代理配置
-	Daemon       DaemonConfig           `yaml:"daemon"`  // Daemon 配置
+	Gateway                 GatewayConfig          `yaml:"gateway"`
+	DefaultAgent            string                 `yaml:"default_agent"` // 默认 Agent ID
+	DataDir                 string                 `yaml:"data_dir"`      // 数据目录 (默认: ./data)
+	ToolResultCondenseLimit int                    `yaml:"tool_result_condense_limit"`
+	ImageAutoCompressLimit  int                    `yaml:"image_auto_compress_limit"`
+	Agents                  map[string]AgentConfig `yaml:"agents"`
+	Shared                  SharedConfig           `yaml:"shared"`
+	LLM                     LLMConfig              `yaml:"llm"`
+	Channels                ChannelsConfig         `yaml:"channels"`
+	Plugins                 PluginConfig           `yaml:"plugins"`
+	Tools                   ToolsConfig            `yaml:"tools"`
+	Memory                  MemoryConfig           `yaml:"memory"`
+	Heartbeat               HeartbeatConfig        `yaml:"heartbeat"`
+	Scheduler               SchedulerConfig        `yaml:"scheduler"`
+	MCP                     MCPConfig              `yaml:"mcp"`     // MCP 服务器配置
+	Logging                 LoggingConfig          `yaml:"logging"` // 日志配置
+	Proxy                   ProxyConfig            `yaml:"proxy"`   // 代理配置
+	Daemon                  DaemonConfig           `yaml:"daemon"`  // Daemon 配置
 }
 
 // DaemonConfig daemon 进程配置
@@ -592,6 +594,12 @@ const defaultAgentMaxIterations = 100
 func setDefaults(cfg *Config, defaultDataDir string) {
 	if cfg.DataDir == "" {
 		cfg.DataDir = defaultDataDir
+	}
+	if cfg.ToolResultCondenseLimit == 0 {
+		cfg.ToolResultCondenseLimit = 32 * 1024
+	}
+	if cfg.ImageAutoCompressLimit == 0 {
+		cfg.ImageAutoCompressLimit = 32 * 1024
 	}
 	if cfg.Gateway.Host == "" {
 		cfg.Gateway.Host = "127.0.0.1"

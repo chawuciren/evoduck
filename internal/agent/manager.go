@@ -44,9 +44,11 @@ type Manager struct {
 	scheduleManager   tools.ScheduleManager
 	sessionGateway    tools.SessionGateway
 	subagentGateway   tools.SubagentGateway
-	pluginManager     *plugin.Manager
-	configReloader    func(context.Context) (string, error)
-	browserManager    *tools.BrowserManager
+	pluginManager            *plugin.Manager
+	configReloader           func(context.Context) (string, error)
+	browserManager           *tools.BrowserManager
+	toolResultCondenseLimit  int
+	imageAutoCompressLimit   int
 }
 
 type reloadProvider struct {
@@ -59,20 +61,34 @@ func (p reloadProvider) ReloadSystem(ctx context.Context, scope string) (string,
 
 func NewManager(llmReg *llm.Registry, dataDir string, sharedSkillsDir string, backendEndpoints config.BackendCallConfig, sessionToolConfig config.SessionToolConfig, memoryConfig config.MemoryConfig, mcpConfig *config.MCPConfig, proxyDecider *proxy.Decider, pluginManager *plugin.Manager) *Manager {
 	mgr := &Manager{
-		agents:            make(map[string]*Agent),
-		llmReg:            llmReg,
-		dataDir:           dataDir,
-		sharedSkillsDir:   sharedSkillsDir,
-		backendEndpoints:  backendEndpoints,
-		sessionToolConfig: sessionToolConfig,
-		memoryConfig:      memoryConfig,
-		mcpConfig:         mcpConfig,
-		proxyDecider:      proxyDecider,
-		pluginManager:     pluginManager,
-		browserManager:    tools.NewBrowserManager(),
+		agents:                   make(map[string]*Agent),
+		llmReg:                   llmReg,
+		dataDir:                  dataDir,
+		sharedSkillsDir:          sharedSkillsDir,
+		backendEndpoints:         backendEndpoints,
+		sessionToolConfig:        sessionToolConfig,
+		memoryConfig:             memoryConfig,
+		mcpConfig:                mcpConfig,
+		proxyDecider:             proxyDecider,
+		pluginManager:            pluginManager,
+		browserManager:           tools.NewBrowserManager(),
+		toolResultCondenseLimit:  32 * 1024,
+		imageAutoCompressLimit:   32 * 1024,
 	}
 
 	return mgr
+}
+
+func (m *Manager) SetToolResultCondenseLimit(limit int) {
+	if limit > 0 {
+		m.toolResultCondenseLimit = limit
+	}
+}
+
+func (m *Manager) SetImageAutoCompressLimit(limit int) {
+	if limit > 0 {
+		m.imageAutoCompressLimit = limit
+	}
 }
 
 type Agent struct {
@@ -740,6 +756,15 @@ func (m *Manager) Register(id string, cfg config.AgentConfig) error {
 	// 仅 employee 和 admin 可用的工具
 	if role == models.RoleEmployee || role == models.RoleAdmin {
 		registerTool("http_call", true, func() { toolReg.Register(tools.NewHTTPCallTool(m.proxyDecider)) })
+		registerTool("media_store", true, func() {
+			tool, err := tools.NewMediaStoreTool(m.dataDir)
+			if err != nil {
+				logger.Warn("Failed to create media_store tool", logger.Fields{"agent_id": id, "error": err.Error()})
+				return
+			}
+			toolReg.Register(tool)
+		})
+		registerTool("image_compress", true, func() { toolReg.Register(tools.NewImageCompressTool()) })
 		registerTool("file_write", true, func() { toolReg.Register(tools.NewFileWriteTool(permissions)) })
 		registerTool("file_edit", true, func() { toolReg.Register(tools.NewFileEditTool(permissions)) })
 		registerTool("file_patch", true, func() { toolReg.Register(tools.NewFilePatchTool(permissions)) })
@@ -880,6 +905,8 @@ func (m *Manager) Register(id string, cfg config.AgentConfig) error {
 	}
 
 	runtime := NewRuntime(id, cfg.Workspace, provider, toolReg, promptBuilder, role, compactor, true, m.pluginManager)
+	runtime.SetToolResultCondenseLimit(m.toolResultCondenseLimit)
+	runtime.SetImageAutoCompressLimit(m.imageAutoCompressLimit)
 	if store, err := mediautil.NewStore(m.dataDir); err != nil {
 		logger.Warn("Failed to create runtime media store", logger.Fields{"agent_id": id, "error": err.Error()})
 	} else {

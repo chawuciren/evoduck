@@ -348,6 +348,29 @@ func (c *APIClient) UploadEncryptedMedia(ctx context.Context, uploadURL string, 
 	return encryptedParam, nil
 }
 
+func (c *APIClient) DownloadMedia(ctx context.Context, downloadURL string) ([]byte, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("create download request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("download media: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", fmt.Errorf("read download response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("download media failed: status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	return body, strings.TrimSpace(resp.Header.Get("Content-Type")), nil
+}
+
 func pkcs7Pad(data []byte, blockSize int) []byte {
 	padding := blockSize - (len(data) % blockSize)
 	if padding == 0 {

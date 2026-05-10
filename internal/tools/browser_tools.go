@@ -274,8 +274,11 @@ func (t *BrowserTypeTool) execute(parent context.Context, args map[string]interf
 }
 
 type browserScreenshotResult struct {
-	Summary string                 `json:"summary"`
-	Media   []models.OutgoingMedia `json:"media,omitempty"`
+	Summary      string                 `json:"summary"`
+	OriginalSize int64                  `json:"original_size,omitempty"`
+	FinalSize    int64                  `json:"final_size,omitempty"`
+	Compressed   bool                   `json:"compressed,omitempty"`
+	Media        []models.OutgoingMedia `json:"media,omitempty"`
 }
 
 type BrowserScreenshotTool struct {
@@ -360,7 +363,10 @@ func (t *BrowserScreenshotTool) execute(parent context.Context, args map[string]
 	}
 
 	payload, err := json.Marshal(browserScreenshotResult{
-		Summary: summary,
+		Summary:      summary,
+		OriginalSize: int64(len(buf)),
+		FinalSize:    int64(len(buf)),
+		Compressed:   false,
 		Media: []models.OutgoingMedia{{
 			Type:     "image",
 			Name:     name,

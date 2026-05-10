@@ -10,9 +10,11 @@ import (
 )
 
 type recordingTypingAPI struct {
-	configs  map[string]*GetConfigResponse
-	statuses []int
-	messages [][]MessageItem
+	configs      map[string]*GetConfigResponse
+	statuses     []int
+	messages     [][]MessageItem
+	downloadBody []byte
+	contentType  string
 }
 
 func (r *recordingTypingAPI) SendMessage(_ context.Context, _ string, _ string, items []MessageItem) error {
@@ -45,6 +47,10 @@ func (r *recordingTypingAPI) GetUploadURL(context.Context, *GetUploadURLRequest)
 
 func (r *recordingTypingAPI) UploadEncryptedMedia(context.Context, string, []byte) (string, error) {
 	return "", nil
+}
+
+func (r *recordingTypingAPI) DownloadMedia(context.Context, string) ([]byte, string, error) {
+	return r.downloadBody, r.contentType, nil
 }
 
 func TestBuildOutgoingItemsWithMedia(t *testing.T) {
@@ -108,6 +114,78 @@ func TestEncodeMediaAESKeyForImageUsesBase64OfHex(t *testing.T) {
 	want := base64.StdEncoding.EncodeToString([]byte("0123456789abcdef1032547698badcfe"))
 	if got != want {
 		t.Fatalf("expected image aes key %q, got %q", want, got)
+	}
+}
+
+func TestNormalizeMessageMapsImageItemsToMedia(t *testing.T) {
+	bridge := New(WeixinConfig{}, nil)
+	bridge.SetChannelConfig("weixin-cs", "bot-user", models.RoleEmployee)
+	msg := bridge.normalizeMessage(WeixinMessage{
+		MessageType:  1,
+		SessionID:    "session-1",
+		ContextToken: "ctx-1",
+		ItemList: []MessageItem{{
+			Type: 2,
+			ImageItem: &ImageItem{
+				Media: &CDNMedia{
+					EncryptQueryParam: "enc=image",
+					AESKey:            "aes-image",
+					FullURL:           "https://example.com/image.jpg",
+				},
+				MidSize: 1234,
+			},
+		}},
+	})
+	if msg == nil {
+		t.Fatal("expected normalized message")
+	}
+	if msg.Content != "" {
+		t.Fatalf("expected empty text content, got %q", msg.Content)
+	}
+	if len(msg.Media) != 1 {
+		t.Fatalf("expected one media item, got %#v", msg.Media)
+	}
+	if msg.Media[0].Type != "image" || msg.Media[0].URL != "https://example.com/image.jpg" {
+		t.Fatalf("unexpected media payload: %#v", msg.Media[0])
+	}
+	if msg.Media[0].EncryptQueryParam != "enc=image" || msg.Media[0].AESKey != "aes-image" {
+		t.Fatalf("expected encrypted media fields, got %#v", msg.Media[0])
+	}
+	if msg.Media[0].FileSize != 1234 {
+		t.Fatalf("expected image size metadata, got %#v", msg.Media[0])
+	}
+}
+
+func TestResolveIncomingMediaDownloadsAndDecrypts(t *testing.T) {
+	key, err := GenerateMediaAESKey()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	plain := []byte("hello inbound image")
+	encrypted, err := EncryptMediaForUpload(plain, key)
+	if err != nil {
+		t.Fatalf("encrypt media: %v", err)
+	}
+	api := &recordingTypingAPI{downloadBody: encrypted, contentType: "image/jpeg"}
+	bridge := New(WeixinConfig{}, nil)
+	bridge.api = api
+	media := []models.OutgoingMedia{{
+		Type:              "image",
+		URL:               "https://example.com/media",
+		EncryptQueryParam: "enc=image",
+		AESKey:            EncodeMediaAESKey(1, key),
+	}}
+	if err := bridge.resolveIncomingMedia(context.Background(), media); err != nil {
+		t.Fatalf("resolve incoming media: %v", err)
+	}
+	if media[0].Data != base64.StdEncoding.EncodeToString(plain) {
+		t.Fatalf("unexpected decoded media data: %#v", media[0])
+	}
+	if media[0].MimeType != "image/jpeg" {
+		t.Fatalf("expected mime type image/jpeg, got %q", media[0].MimeType)
+	}
+	if media[0].FileSize != int64(len(plain)) {
+		t.Fatalf("expected file size %d, got %d", len(plain), media[0].FileSize)
 	}
 }
 

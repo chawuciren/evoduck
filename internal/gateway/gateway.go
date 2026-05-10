@@ -348,6 +348,17 @@ func (g *Gateway) handleChannelMessage(msg *models.NormalizedMessage) {
 	if sessionExists != nil {
 		g.triggerOnConversationBinding(msg, sessKey)
 	}
+	media, err := g.normalizeIncomingMedia(msg.Media)
+	if err != nil {
+		logger.Error("Failed to normalize channel media", logger.Fields{
+			"channel":    msg.Channel,
+			"account_id": msg.AccountID,
+			"sender_id":  msg.SenderID,
+			"error":      err.Error(),
+		})
+		return
+	}
+	msg.Media = media
 	ctx := context.Background()
 	streamConfig := models.StreamConfig{MaxIterations: ag.Config.MaxIterations, SendToolEvents: true}
 	stream, err := g.runSessionInputWithMedia(ctx, ag.ID, sess.Key, msg.Content, msg.Media, streamConfig)

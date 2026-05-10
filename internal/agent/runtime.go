@@ -134,18 +134,20 @@ func formatMessagesDebug(messages []models.Message) string {
 }
 
 type Runtime struct {
-	llmProvider       llm.Provider
-	toolRegistry      *tools.Registry
-	promptBuilder     *PromptBuilder
-	compactor         *Compactor // 旧的 session 压缩器 (保留兼容)
-	taskPlanner       *TaskPlanner
-	completionChecker *CompletionChecker
-	pluginManager     *plugin.Manager
-	agentID           string
-	workspace         string
-	role              models.Role
-	userIsolation     bool // 是否启用用户隔离
-	mediaStore        *mediautil.Store
+	llmProvider              llm.Provider
+	toolRegistry             *tools.Registry
+	promptBuilder            *PromptBuilder
+	compactor                *Compactor // 旧的 session 压缩器 (保留兼容)
+	taskPlanner              *TaskPlanner
+	completionChecker        *CompletionChecker
+	pluginManager            *plugin.Manager
+	agentID                  string
+	workspace                string
+	role                     models.Role
+	userIsolation            bool // 是否启用用户隔离
+	mediaStore               *mediautil.Store
+	toolResultCondenseLimit  int
+	imageAutoCompressLimit   int
 }
 
 func NewRuntime(agentID, workspace string, llmProvider llm.Provider, toolRegistry *tools.Registry, promptBuilder *PromptBuilder, role models.Role, compactor *Compactor, userIsolation bool, pluginManager *plugin.Manager) *Runtime {
@@ -166,6 +168,14 @@ func NewRuntime(agentID, workspace string, llmProvider llm.Provider, toolRegistr
 
 func (r *Runtime) SetMediaStore(store *mediautil.Store) {
 	r.mediaStore = store
+}
+
+func (r *Runtime) SetToolResultCondenseLimit(limit int) {
+	r.toolResultCondenseLimit = limit
+}
+
+func (r *Runtime) SetImageAutoCompressLimit(limit int) {
+	r.imageAutoCompressLimit = limit
 }
 
 // ApplyPlan 实现 tools.PlanApplier 接口
@@ -284,8 +294,35 @@ type toolResultEnvelope struct {
 }
 
 type browserScreenshotToolResult struct {
-	Summary string                 `json:"summary"`
-	Media   []models.OutgoingMedia `json:"media,omitempty"`
+	Summary      string                 `json:"summary"`
+	OriginalSize int64                  `json:"original_size,omitempty"`
+	FinalSize    int64                  `json:"final_size,omitempty"`
+	Compressed   bool                   `json:"compressed,omitempty"`
+	Media        []models.OutgoingMedia `json:"media,omitempty"`
+}
+
+func condenseToolResultText(result string, limit int) string {
+	if limit <= 0 || len(result) <= limit {
+		return result
+	}
+	previewLimit := limit / 4
+	if previewLimit < 256 {
+		previewLimit = 256
+	}
+	if previewLimit > 2048 {
+		previewLimit = 2048
+	}
+	if previewLimit >= len(result) && len(result) > 1 {
+		previewLimit = len(result) - 1
+	}
+	if previewLimit > len(result) {
+		previewLimit = len(result)
+	}
+	preview := strings.TrimSpace(result[:previewLimit])
+	if preview == "" {
+		preview = "[empty output preview]"
+	}
+	return fmt.Sprintf("[tool output condensed]\nReason: Output exceeded the configured tool result size limit before entering session history.\nOriginal size: %d bytes\nPreview:\n%s", len(result), preview)
 }
 
 func (r *Runtime) normalizeToolResult(toolName, result string) (toolResultEnvelope, error) {
@@ -297,16 +334,102 @@ func (r *Runtime) normalizeToolResult(toolName, result string) (toolResultEnvelo
 	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
 		return env, nil
 	}
+	media, err := r.normalizeBrowserScreenshotMedia(parsed.Media)
+	if err != nil {
+		return toolResultEnvelope{}, err
+	}
 	env.Content = strings.TrimSpace(parsed.Summary)
 	if env.Content == "" {
 		env.Content = "Screenshot captured"
 	}
-	media, err := mediautil.NormalizeOutgoingMedia(r.mediaStore, parsed.Media)
-	if err != nil {
-		return toolResultEnvelope{}, err
+	if len(media) > 0 {
+		first := media[0]
+		originalSize := parsed.OriginalSize
+		if originalSize == 0 {
+			originalSize = first.FileSize
+		}
+		finalSize := parsed.FinalSize
+		if finalSize == 0 {
+			finalSize = first.FileSize
+		}
+		env.Content = formatBrowserScreenshotSummary(env.Content, first, originalSize, finalSize, parsed.Compressed)
 	}
 	env.Media = media
 	return env, nil
+}
+
+func formatBrowserScreenshotSummary(summary string, media models.OutgoingMedia, originalSize, finalSize int64, compressed bool) string {
+	parts := []string{summary}
+	if media.Path != "" {
+		parts = append(parts, "Path: "+media.Path)
+	}
+	if media.URL != "" {
+		parts = append(parts, "Media URL: "+media.URL)
+	}
+	if originalSize > 0 {
+		parts = append(parts, fmt.Sprintf("Original size: %d bytes", originalSize))
+	}
+	if finalSize > 0 {
+		parts = append(parts, fmt.Sprintf("Final size: %d bytes", finalSize))
+	}
+	parts = append(parts, fmt.Sprintf("Compressed: %t", compressed))
+	return strings.Join(parts, "\n")
+}
+
+func (r *Runtime) normalizeBrowserScreenshotMedia(media []models.OutgoingMedia) ([]models.OutgoingMedia, error) {
+	if len(media) == 0 {
+		return nil, nil
+	}
+	if r.mediaStore == nil {
+		return mediautil.NormalizeOutgoingMedia(nil, media)
+	}
+	normalized := make([]models.OutgoingMedia, 0, len(media))
+	for _, item := range media {
+		clean := item
+		clean.Type = strings.TrimSpace(clean.Type)
+		clean.Name = mediautil.SanitizeName(clean.Name)
+		clean.URL = strings.TrimSpace(clean.URL)
+		clean.Path = strings.TrimSpace(clean.Path)
+		clean.Data = strings.TrimSpace(clean.Data)
+		if clean.URL != "" {
+			resolved, ok, err := mediautil.ResolveStoredMedia(r.mediaStore, clean)
+			if err != nil {
+				return nil, fmt.Errorf("resolve screenshot media %q: %w", clean.URL, err)
+			}
+			if ok {
+				normalized = append(normalized, resolved)
+				continue
+			}
+		}
+		if clean.Data == "" && clean.Path == "" {
+			normalized = append(normalized, clean)
+			continue
+		}
+		stored, err := mediautil.StoreMedia(r.mediaStore, mediautil.StoreInput{
+			Path:     clean.Path,
+			Data:     clean.Data,
+			Name:     clean.Name,
+			MimeType: clean.MimeType,
+			Compress: true,
+			MaxBytes: r.imageAutoCompressLimit,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("store screenshot media %q: %w", clean.Name, err)
+		}
+		clean.URL = stored.URL
+		clean.Name = stored.Name
+		clean.MimeType = stored.MimeType
+		clean.FileSize = stored.FinalSize
+		clean.Path = stored.Path
+		clean.Data = ""
+		normalized = append(normalized, clean)
+	}
+	return normalized, nil
+}
+
+func (r *Runtime) condenseToolResultEnvelope(env toolResultEnvelope) toolResultEnvelope {
+	env.Content = condenseToolResultText(env.Content, r.toolResultCondenseLimit)
+	return env
 }
 
 func (r *Runtime) appendToolResultMessage(sess *session.Session, tc models.ToolCall, result string) error {
@@ -314,6 +437,7 @@ func (r *Runtime) appendToolResultMessage(sess *session.Session, tc models.ToolC
 	if err != nil {
 		return err
 	}
+	env = r.condenseToolResultEnvelope(env)
 	msg := models.Message{
 		Role:       "tool",
 		Content:    env.Content,
@@ -321,9 +445,6 @@ func (r *Runtime) appendToolResultMessage(sess *session.Session, tc models.ToolC
 		ToolCallID: tc.ID,
 	}
 	sess.Append(msg)
-	if llm.RequiresDeferredToolImageReplay(r.llmProvider) && len(env.Media) > 0 {
-		sess.SetPendingToolReplay(&msg)
-	}
 	return nil
 }
 
@@ -332,7 +453,7 @@ func (r *Runtime) toolResultObserverText(toolName, result string) string {
 	if err != nil {
 		return result
 	}
-	return env.Content
+	return r.condenseToolResultEnvelope(env).Content
 }
 
 func (r *Runtime) streamFinalResponse(ctx context.Context, sess *session.Session, outputCh chan<- models.StreamEvent, iteration int, summaryMessages []models.Message) {
@@ -469,9 +590,6 @@ func (r *Runtime) RunWithMedia(ctx context.Context, sess *session.Session, userM
 	response, err := r.llmProvider.Chat(ctx, messages, toolDefs)
 	if err != nil {
 		return fmt.Errorf("LLM chat: %w", err)
-	}
-	if llm.RequiresDeferredToolImageReplay(r.llmProvider) {
-		sess.ClearPendingToolReplay()
 	}
 
 	maxIterations := 10

@@ -2,9 +2,14 @@ package weixin
 
 import (
 	"context"
+	"crypto/aes"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -43,6 +48,7 @@ type weixinAPI interface {
 	GetUpdates(ctx context.Context, buf string) (*GetUpdatesResponse, error)
 	GetUploadURL(ctx context.Context, req *GetUploadURLRequest) (*GetUploadURLResponse, error)
 	UploadEncryptedMedia(ctx context.Context, uploadURL string, encrypted []byte) (string, error)
+	DownloadMedia(ctx context.Context, downloadURL string) ([]byte, string, error)
 }
 
 // New 创建微信 Bridge
@@ -558,6 +564,14 @@ func (w *WeixinBridge) processMessages(msgs []WeixinMessage) {
 
 		normalized := w.normalizeMessage(msg)
 		if normalized != nil {
+			if err := w.resolveIncomingMedia(context.Background(), normalized.Media); err != nil {
+				logger.Warn("Weixin resolve incoming media failed", logger.Fields{
+					"channel_id": w.channelID,
+					"sender_id":  normalized.SenderID,
+					"thread_id":  normalized.ThreadID,
+					"error":      err.Error(),
+				})
+			}
 			logger.Info("Weixin normalized message", logger.Fields{
 				"channel_id": w.channelID,
 				"sender_id":  normalized.SenderID,
@@ -576,6 +590,328 @@ func truncateString(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
+func normalizeWeixinIncomingItems(items []MessageItem) (string, []models.OutgoingMedia) {
+	content := ""
+	media := make([]models.OutgoingMedia, 0, len(items))
+	for _, item := range items {
+		switch item.Type {
+		case 1:
+			if item.TextItem != nil && content == "" {
+				content = item.TextItem.Text
+			}
+		case 2:
+			if mapped, ok := normalizeWeixinImageItem(item.ImageItem); ok {
+				media = append(media, mapped)
+			}
+		case 3:
+			if mapped, ok := normalizeWeixinVoiceItem(item.VoiceItem); ok {
+				media = append(media, mapped)
+			}
+		case 4:
+			if mapped, ok := normalizeWeixinFileItem(item.FileItem); ok {
+				media = append(media, mapped)
+			}
+		case 5:
+			if mapped, ok := normalizeWeixinVideoItem(item.VideoItem); ok {
+				media = append(media, mapped)
+			}
+		}
+	}
+	if len(media) == 0 {
+		return content, nil
+	}
+	return content, media
+}
+
+func normalizeWeixinImageItem(item *ImageItem) (models.OutgoingMedia, bool) {
+	if item == nil {
+		return models.OutgoingMedia{}, false
+	}
+	media := normalizeWeixinCDNMedia("image", item.Media)
+	if !mediaOk(media) {
+		media = normalizeWeixinCDNMedia("image", item.ThumbMedia)
+	}
+	if strings.TrimSpace(media.AESKey) == "" {
+		media.AESKey = strings.TrimSpace(item.AESKey)
+	}
+	if !mediaOk(media) {
+		media.URL = strings.TrimSpace(item.URL)
+	}
+	if !mediaOk(media) {
+		return models.OutgoingMedia{}, false
+	}
+	media.FileSize = item.MidSize
+	if media.FileSize == 0 {
+		media.FileSize = item.HDSize
+	}
+	return media, true
+}
+
+func normalizeWeixinVoiceItem(item *VoiceItem) (models.OutgoingMedia, bool) {
+	if item == nil {
+		return models.OutgoingMedia{}, false
+	}
+	media := normalizeWeixinCDNMedia("audio", item.Media)
+	if !mediaOk(media) {
+		return models.OutgoingMedia{}, false
+	}
+	return media, true
+}
+
+func normalizeWeixinFileItem(item *FileItem) (models.OutgoingMedia, bool) {
+	if item == nil {
+		return models.OutgoingMedia{}, false
+	}
+	media := normalizeWeixinCDNMedia("file", item.Media)
+	if !mediaOk(media) {
+		return models.OutgoingMedia{}, false
+	}
+	media.Name = strings.TrimSpace(item.FileName)
+	return media, true
+}
+
+func normalizeWeixinVideoItem(item *VideoItem) (models.OutgoingMedia, bool) {
+	if item == nil {
+		return models.OutgoingMedia{}, false
+	}
+	media := normalizeWeixinCDNMedia("video", item.Media)
+	if !mediaOk(media) {
+		media = normalizeWeixinCDNMedia("image", item.ThumbMedia)
+		media.Type = "video"
+		media.MimeType = "video"
+	}
+	if !mediaOk(media) {
+		return models.OutgoingMedia{}, false
+	}
+	if item.VideoSize > 0 {
+		media.FileSize = item.VideoSize
+	} else if item.ThumbSize > 0 {
+		media.FileSize = item.ThumbSize
+	}
+	return media, true
+}
+
+func normalizeWeixinCDNMedia(mediaType string, item *CDNMedia) models.OutgoingMedia {
+	if item == nil {
+		return models.OutgoingMedia{}
+	}
+	return models.OutgoingMedia{
+		Type:              mediaType,
+		URL:               strings.TrimSpace(item.FullURL),
+		EncryptQueryParam: strings.TrimSpace(item.EncryptQueryParam),
+		AESKey:            strings.TrimSpace(item.AESKey),
+	}
+}
+
+func mediaOk(item models.OutgoingMedia) bool {
+	return strings.TrimSpace(item.URL) != "" || strings.TrimSpace(item.EncryptQueryParam) != "" || strings.TrimSpace(item.AESKey) != ""
+}
+
+func (w *WeixinBridge) resolveIncomingMedia(ctx context.Context, media []models.OutgoingMedia) error {
+	for i := range media {
+		if err := w.resolveIncomingMediaItem(ctx, &media[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (w *WeixinBridge) resolveIncomingMediaItem(ctx context.Context, media *models.OutgoingMedia) error {
+	if media == nil || strings.TrimSpace(media.Data) != "" || strings.TrimSpace(media.Path) != "" {
+		return nil
+	}
+	url := buildWeixinDownloadURL(strings.TrimSpace(media.URL), strings.TrimSpace(media.EncryptQueryParam))
+	if url == "" || strings.TrimSpace(media.AESKey) == "" {
+		return nil
+	}
+	ciphertext, contentType, err := w.api.DownloadMedia(ctx, url)
+	if err != nil {
+		return err
+	}
+	plain, err := decryptECBMedia(ciphertext, media.AESKey)
+	if err != nil {
+		return err
+	}
+	media.Data = base64.StdEncoding.EncodeToString(plain)
+	if strings.TrimSpace(media.Name) == "" {
+		media.Name = inferMediaName(media.Type, url, contentType)
+	}
+	if isGenericMediaHint(media.MimeType) {
+		media.MimeType = detectMimeType(plain, contentType)
+	} else if strings.TrimSpace(media.MimeType) == "" {
+		media.MimeType = detectMimeType(plain, contentType)
+	}
+	media.FileSize = int64(len(plain))
+	return nil
+}
+
+func buildWeixinDownloadURL(rawURL, encryptQueryParam string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return ""
+	}
+	if strings.TrimSpace(encryptQueryParam) == "" {
+		return rawURL
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	query := parsed.Query()
+	if query.Get("encrypted_query_param") == "" {
+		query.Set("encrypted_query_param", strings.TrimSpace(encryptQueryParam))
+	}
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
+}
+
+func decryptECBMedia(ciphertext []byte, encodedKey string) ([]byte, error) {
+	key, err := decodeMediaAESKey(encodedKey)
+	if err != nil {
+		return nil, err
+	}
+	if len(ciphertext) == 0 {
+		return nil, fmt.Errorf("media ciphertext is empty")
+	}
+	if len(ciphertext)%aes.BlockSize != 0 {
+		return nil, fmt.Errorf("media ciphertext length %d is not a multiple of %d", len(ciphertext), aes.BlockSize)
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("create aes cipher: %w", err)
+	}
+	plain := make([]byte, len(ciphertext))
+	for start := 0; start < len(ciphertext); start += aes.BlockSize {
+		block.Decrypt(plain[start:start+aes.BlockSize], ciphertext[start:start+aes.BlockSize])
+	}
+	plain, err = pkcs7Unpad(plain, aes.BlockSize)
+	if err != nil {
+		return nil, err
+	}
+	return plain, nil
+}
+
+func decodeMediaAESKey(encoded string) ([]byte, error) {
+	encoded = strings.TrimSpace(encoded)
+	if encoded == "" {
+		return nil, fmt.Errorf("media aes key is empty")
+	}
+	if decoded, err := base64.StdEncoding.DecodeString(encoded); err == nil {
+		if len(decoded) == 16 {
+			return decoded, nil
+		}
+		if len(decoded) == 32 {
+			if key, err := decodeHexAESKey(string(decoded)); err == nil {
+				return key, nil
+			}
+		}
+	}
+	if key, err := decodeHexAESKey(encoded); err == nil {
+		return key, nil
+	}
+	return nil, fmt.Errorf("unsupported media aes key format")
+}
+
+func decodeHexAESKey(value string) ([]byte, error) {
+	decoded, err := hex.DecodeString(strings.TrimSpace(value))
+	if err != nil {
+		return nil, fmt.Errorf("decode media aes key hex: %w", err)
+	}
+	if len(decoded) != 16 {
+		return nil, fmt.Errorf("media aes key length %d is invalid", len(decoded))
+	}
+	return decoded, nil
+}
+
+func pkcs7Unpad(data []byte, blockSize int) ([]byte, error) {
+	if len(data) == 0 || len(data)%blockSize != 0 {
+		return nil, fmt.Errorf("invalid pkcs7 padded data length %d", len(data))
+	}
+	padding := int(data[len(data)-1])
+	if padding == 0 || padding > blockSize || padding > len(data) {
+		return nil, fmt.Errorf("invalid pkcs7 padding size %d", padding)
+	}
+	for _, b := range data[len(data)-padding:] {
+		if int(b) != padding {
+			return nil, fmt.Errorf("invalid pkcs7 padding")
+		}
+	}
+	return data[:len(data)-padding], nil
+}
+
+func detectMimeType(data []byte, fallback string) string {
+	if trimmed := strings.TrimSpace(fallback); trimmed != "" {
+		if mimeType := strings.TrimSpace(strings.Split(trimmed, ";")[0]); mimeType != "" {
+			return mimeType
+		}
+	}
+	if len(data) == 0 {
+		return "application/octet-stream"
+	}
+	return http.DetectContentType(data)
+}
+
+func inferMediaName(mediaType, rawURL, contentType string) string {
+	if parsed, err := url.Parse(strings.TrimSpace(rawURL)); err == nil {
+		if base := path.Base(parsed.Path); base != "" && base != "." && base != "/" {
+			return base
+		}
+	}
+	ext := extensionForMimeType(contentType)
+	if ext == "" {
+		ext = extensionForMediaType(mediaType)
+	}
+	if ext == "" {
+		ext = ".bin"
+	}
+	return strings.TrimSpace(mediaType) + ext
+}
+
+func extensionForMimeType(contentType string) string {
+	switch detectMimeType(nil, contentType) {
+	case "image/jpeg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/gif":
+		return ".gif"
+	case "audio/mpeg":
+		return ".mp3"
+	case "audio/wav":
+		return ".wav"
+	case "video/mp4":
+		return ".mp4"
+	case "application/pdf":
+		return ".pdf"
+	default:
+		return ""
+	}
+}
+
+func extensionForMediaType(mediaType string) string {
+	switch strings.ToLower(strings.TrimSpace(mediaType)) {
+	case "image":
+		return ".jpg"
+	case "audio":
+		return ".mp3"
+	case "video":
+		return ".mp4"
+	case "file":
+		return ".bin"
+	default:
+		return ".bin"
+	}
+}
+
+func isGenericMediaHint(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "image", "audio", "voice", "video", "file":
+		return true
+	default:
+		return !strings.Contains(value, "/")
+	}
+}
+
 // normalizeMessage 归一化消息
 // 微信个人号：忽略消息中的 from_user_id，使用配置中的 user_id
 func (w *WeixinBridge) normalizeMessage(msg WeixinMessage) *models.NormalizedMessage {
@@ -587,15 +923,8 @@ func (w *WeixinBridge) normalizeMessage(msg WeixinMessage) *models.NormalizedMes
 		return nil
 	}
 
-	content := ""
-	for _, item := range msg.ItemList {
-		if item.Type == 1 && item.TextItem != nil {
-			content = item.TextItem.Text
-			break
-		}
-	}
-
-	if content == "" {
+	content, media := normalizeWeixinIncomingItems(msg.ItemList)
+	if content == "" && len(media) == 0 {
 		logger.Debug("Weixin skip empty message", logger.Fields{
 			"channel_id": w.channelID,
 			"message_id": msg.MessageID,
@@ -611,6 +940,7 @@ func (w *WeixinBridge) normalizeMessage(msg WeixinMessage) *models.NormalizedMes
 		SenderID:     w.userID,    // 配置的用户ID
 		UserID:       w.userID,    // 业务用户ID
 		Content:      content,
+		Media:        media,
 		ThreadID:     msg.SessionID,
 		IsDM:         true,
 		Role:         w.role,

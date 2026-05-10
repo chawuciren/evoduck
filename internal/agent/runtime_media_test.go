@@ -38,8 +38,17 @@ func TestNormalizeToolResultStoresBrowserScreenshotMedia(t *testing.T) {
 	if err != nil {
 		t.Fatalf("normalize tool result: %v", err)
 	}
-	if env.Content != "Full-page screenshot captured (11 bytes)" {
+	if !strings.Contains(env.Content, "Full-page screenshot captured (11 bytes)") {
 		t.Fatalf("unexpected summary: %q", env.Content)
+	}
+	if !strings.Contains(env.Content, "Path: ") || !strings.Contains(env.Content, "Media URL: ") {
+		t.Fatalf("expected screenshot metadata in summary, got %q", env.Content)
+	}
+	if !strings.Contains(env.Content, "Original size: 9 bytes") || !strings.Contains(env.Content, "Final size: 9 bytes") {
+		t.Fatalf("expected screenshot size metadata in summary, got %q", env.Content)
+	}
+	if !strings.Contains(env.Content, "Compressed: false") {
+		t.Fatalf("expected screenshot compression flag in summary, got %q", env.Content)
 	}
 	if len(env.Media) != 1 {
 		t.Fatalf("expected one media item, got %d", len(env.Media))
@@ -97,8 +106,11 @@ func TestAppendToolResultMessagePersistsToolMedia(t *testing.T) {
 	if msg.Role != "tool" {
 		t.Fatalf("expected tool role, got %q", msg.Role)
 	}
-	if msg.Content != "Screenshot captured (9 bytes)" {
+	if !strings.Contains(msg.Content, "Screenshot captured (9 bytes)") {
 		t.Fatalf("unexpected tool content: %q", msg.Content)
+	}
+	if !strings.Contains(msg.Content, "Path: ") || !strings.Contains(msg.Content, "Media URL: ") {
+		t.Fatalf("expected screenshot metadata in tool content, got %q", msg.Content)
 	}
 	if len(msg.Media) != 1 {
 		t.Fatalf("expected one media item, got %d", len(msg.Media))
@@ -130,10 +142,56 @@ func TestToolResultObserverTextSanitizesBrowserScreenshotPayload(t *testing.T) {
 	}
 
 	got := runtime.toolResultObserverText("browser_screenshot", string(payload))
-	if got != "Element screenshot captured for #app (8 bytes)" {
+	if !strings.Contains(got, "Element screenshot captured for #app (8 bytes)") {
 		t.Fatalf("unexpected observer text: %q", got)
 	}
-	if strings.Contains(got, "data") || strings.Contains(got, "media") || strings.Contains(got, "png-data") {
+	if strings.Contains(got, "png-data") {
 		t.Fatalf("expected sanitized observer text, got %q", got)
+	}
+	if !strings.Contains(got, "Compressed: false") {
+		t.Fatalf("expected screenshot metadata in observer text, got %q", got)
+	}
+}
+
+func TestAppendToolResultMessageCondensesOversizedContent(t *testing.T) {
+	runtime := NewRuntime("agent-media-test", t.TempDir(), nil, nil, nil, models.RoleAdmin, nil, true, nil)
+	runtime.SetToolResultCondenseLimit(64)
+	sess := session.NewSession("webchat:test-user", "tool-condense-session", nil)
+	large := strings.Repeat("abcdef", 40)
+
+	if err := runtime.appendToolResultMessage(sess, models.ToolCall{
+		ID:       "tool-call-oversized",
+		Function: models.ToolCallFunction{Name: "file_read"},
+	}, large); err != nil {
+		t.Fatalf("append tool result message: %v", err)
+	}
+
+	messages := sess.GetMessages()
+	if len(messages) != 1 {
+		t.Fatalf("expected one persisted message, got %d", len(messages))
+	}
+	msg := messages[0]
+	if !strings.Contains(msg.Content, "[tool output condensed]") {
+		t.Fatalf("expected condensed marker, got %q", msg.Content)
+	}
+	if !strings.Contains(msg.Content, "Original size: 240 bytes") {
+		t.Fatalf("expected original size in condensed content, got %q", msg.Content)
+	}
+	if strings.Contains(msg.Content, large) {
+		t.Fatal("expected oversized raw tool result to be omitted")
+	}
+}
+
+func TestToolResultObserverTextCondensesOversizedContent(t *testing.T) {
+	runtime := NewRuntime("agent-media-test", t.TempDir(), nil, nil, nil, models.RoleAdmin, nil, true, nil)
+	runtime.SetToolResultCondenseLimit(64)
+	large := strings.Repeat("abcdef", 40)
+
+	got := runtime.toolResultObserverText("file_read", large)
+	if !strings.Contains(got, "[tool output condensed]") {
+		t.Fatalf("expected condensed observer text, got %q", got)
+	}
+	if !strings.Contains(got, "Preview:") {
+		t.Fatalf("expected preview section, got %q", got)
 	}
 }

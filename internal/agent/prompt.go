@@ -207,11 +207,6 @@ func (pb *PromptBuilder) Build(_ context.Context, sess *session.Session, userMes
 	messages = append(messages, historyMsgs...)
 	ptLog.Debug("Session history added", logger.Fields{"message_count": len(historyMsgs)})
 
-	if replayMsg := pb.buildPendingToolReplayMessage(sess); replayMsg != nil {
-		messages = append(messages, *replayMsg)
-		ptLog.Debug("Deferred tool replay injected", logger.Fields{"media_count": len(replayMsg.Media)})
-	}
-
 	ptLog.Info("Prompt complete", logger.Fields{"total_messages": len(messages)})
 
 	// 检查总字符数是否超限
@@ -223,21 +218,6 @@ func (pb *PromptBuilder) Build(_ context.Context, sess *session.Session, userMes
 	}
 
 	return messages, nil
-}
-
-func (pb *PromptBuilder) buildPendingToolReplayMessage(sess *session.Session) *models.Message {
-	if pb == nil || sess == nil || !llm.RequiresDeferredToolImageReplay(pb.llmProvider) {
-		return nil
-	}
-	replayMsg := sess.PendingToolReplay()
-	if replayMsg == nil || len(replayMsg.Media) == 0 {
-		return nil
-	}
-	return &models.Message{
-		Role:    "user",
-		Content: "Tool result image replay. Use this screenshot together with the immediately preceding tool result.",
-		Media:   append([]models.OutgoingMedia(nil), replayMsg.Media...),
-	}
 }
 
 func (pb *PromptBuilder) privateMemoryUserID(sess *session.Session) string {

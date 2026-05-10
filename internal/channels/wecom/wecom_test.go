@@ -1,9 +1,13 @@
 package wecom
 
 import (
+	"crypto/aes"
+	"encoding/base64"
 	"encoding/json"
-	"time"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/chawuciren/evoduck/pkg/models"
 )
@@ -337,6 +341,94 @@ func TestHandleCommandPrioritizesMsgCallbackOverPendingResolution(t *testing.T) 
 	}
 }
 
+func TestHandleCommandMapsImageCallbackToMedia(t *testing.T) {
+	bridge := New(WeComConfig{}, nil)
+	got := make(chan *models.NormalizedMessage, 1)
+	bridge.SetChannelConfig("wecom-1", models.RoleEmployee)
+	bridge.OnMessage(func(msg *models.NormalizedMessage) {
+		got <- msg
+	})
+	bridge.handleCommand("aibot_msg_callback", map[string]interface{}{
+		"cmd": "aibot_msg_callback",
+		"headers": map[string]interface{}{
+			"req_id": "req-image-1",
+		},
+		"body": map[string]interface{}{
+			"msgtype": "image",
+			"req_id":  "req-image-1",
+			"from": map[string]interface{}{
+				"userid": "alice",
+			},
+			"image": map[string]interface{}{
+				"media_id": "media-image-1",
+			},
+		},
+	})
+	select {
+	case msg := <-got:
+		if msg.Content != "" {
+			t.Fatalf("expected empty text content, got %q", msg.Content)
+		}
+		if len(msg.Media) != 1 {
+			t.Fatalf("expected one media item, got %#v", msg.Media)
+		}
+		if msg.Media[0].Type != "image" || msg.Media[0].URL != "media-image-1" {
+			t.Fatalf("unexpected media payload: %#v", msg.Media[0])
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for image callback")
+	}
+}
+
+func TestHandleCommandDownloadsAndDecryptsRemoteImage(t *testing.T) {
+	key := []byte("1234567890abcdef")
+	plain := []byte("wecom inbound image")
+	encrypted := encryptECBForTest(t, plain, key)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/jpeg")
+		_, _ = w.Write(encrypted)
+	}))
+	defer server.Close()
+
+	bridge := New(WeComConfig{}, nil)
+	got := make(chan *models.NormalizedMessage, 1)
+	bridge.SetChannelConfig("wecom-1", models.RoleEmployee)
+	bridge.OnMessage(func(msg *models.NormalizedMessage) {
+		got <- msg
+	})
+	bridge.handleCommand("aibot_msg_callback", map[string]interface{}{
+		"cmd": "aibot_msg_callback",
+		"headers": map[string]interface{}{
+			"req_id": "req-image-2",
+		},
+		"body": map[string]interface{}{
+			"msgtype": "image",
+			"req_id":  "req-image-2",
+			"from": map[string]interface{}{
+				"userid": "alice",
+			},
+			"image": map[string]interface{}{
+				"url":    server.URL + "/encrypted.jpg",
+				"aeskey": base64.StdEncoding.EncodeToString(key),
+			},
+		},
+	})
+	select {
+	case msg := <-got:
+		if len(msg.Media) != 1 {
+			t.Fatalf("expected one media item, got %#v", msg.Media)
+		}
+		if gotData := msg.Media[0].Data; gotData != base64.StdEncoding.EncodeToString(plain) {
+			t.Fatalf("unexpected decoded media data: %#v", msg.Media[0])
+		}
+		if msg.Media[0].MimeType != "image/jpeg" {
+			t.Fatalf("expected mime type image/jpeg, got %q", msg.Media[0].MimeType)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for remote image callback")
+	}
+}
+
 type capturingJSONConn struct {
 	frames []map[string]interface{}
 }
@@ -373,4 +465,25 @@ func assertWeComStreamContent(t *testing.T, frame map[string]interface{}, want s
 	if got := stream["finish"]; got != wantFinish {
 		t.Fatalf("expected stream finish=%v, got %#v", wantFinish, got)
 	}
+}
+
+func encryptECBForTest(t *testing.T, plain []byte, key []byte) []byte {
+	t.Helper()
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		t.Fatalf("create aes cipher: %v", err)
+	}
+	padding := aes.BlockSize - (len(plain) % aes.BlockSize)
+	if padding == 0 {
+		padding = aes.BlockSize
+	}
+	padded := append(append([]byte{}, plain...), make([]byte, padding)...)
+	for i := len(plain); i < len(padded); i++ {
+		padded[i] = byte(padding)
+	}
+	encrypted := make([]byte, len(padded))
+	for start := 0; start < len(padded); start += aes.BlockSize {
+		block.Encrypt(encrypted[start:start+aes.BlockSize], padded[start:start+aes.BlockSize])
+	}
+	return encrypted
 }

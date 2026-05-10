@@ -2,17 +2,22 @@ package wecom
 
 import (
 	"context"
+	"crypto/aes"
 	"crypto/md5"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
-	"sync/atomic"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/chawuciren/evoduck/internal/channels"
@@ -362,25 +367,16 @@ func (w *WeCom) handleMsgCallback(msg map[string]interface{}) {
 		"response_url": responseURL,
 	})
 
-	var content string
-	switch msgType {
-	case "text":
-		textObj, _ := body["text"].(map[string]interface{})
-		content, _ = textObj["content"].(string)
-		logger.Debug("WeCom text content", logger.Fields{
-			"channel_id": w.channelID,
-			"content":    content,
-		})
-	default:
+	content, media, ok := normalizeWeComIncomingMessage(body, msgType)
+	if !ok {
 		logger.Debug("WeCom unsupported msg_type", logger.Fields{
 			"channel_id": w.channelID,
 			"msg_type":   msgType,
 		})
 		return
 	}
-
-	if content == "" {
-		logger.Debug("WeCom empty content, skipping", logger.Fields{
+	if content == "" && len(media) == 0 {
+		logger.Debug("WeCom empty content and media, skipping", logger.Fields{
 			"channel_id": w.channelID,
 		})
 		return
@@ -396,6 +392,16 @@ func (w *WeCom) handleMsgCallback(msg map[string]interface{}) {
 		"req_id":     reqID,
 	})
 
+	if err := w.resolveIncomingMedia(context.Background(), media); err != nil {
+		logger.Warn("WeCom resolve incoming media failed", logger.Fields{
+			"channel_id": w.channelID,
+			"sender_id":  senderID,
+			"chat_id":    chatID,
+			"req_id":     reqID,
+			"error":      err.Error(),
+		})
+	}
+
 	if w.handler != nil {
 		threadID := chatID
 		if threadID == "" {
@@ -408,6 +414,7 @@ func (w *WeCom) handleMsgCallback(msg map[string]interface{}) {
 			SenderID:     senderID,
 			UserID:       senderID,
 			Content:      content,
+			Media:        media,
 			ThreadID:     threadID,
 			IsDM:         chatType == "single",
 			Role:         w.role,
@@ -428,6 +435,111 @@ func (w *WeCom) handleMsgCallback(msg map[string]interface{}) {
 			"channel_id": w.channelID,
 		})
 	}
+}
+
+func normalizeWeComIncomingMessage(body map[string]interface{}, msgType string) (string, []models.OutgoingMedia, bool) {
+	switch strings.ToLower(strings.TrimSpace(msgType)) {
+	case "text":
+		textObj, _ := body["text"].(map[string]interface{})
+		content, _ := textObj["content"].(string)
+		return content, nil, true
+	case "image", "voice", "file", "video":
+		mediaObj, _ := body[msgType].(map[string]interface{})
+		mediaURL, _ := mediaObj["url"].(string)
+		aesKey, _ := mediaObj["aeskey"].(string)
+		mediaID, _ := mediaObj["media_id"].(string)
+		if strings.TrimSpace(mediaURL) == "" && strings.TrimSpace(mediaID) == "" {
+			return "", nil, true
+		}
+		mediaType := msgType
+		if mediaType == "voice" {
+			mediaType = "audio"
+		}
+		name, _ := mediaObj["title"].(string)
+		mimeType, _ := mediaObj["mime_type"].(string)
+		if strings.TrimSpace(mimeType) == "" {
+			mimeType = strings.TrimSpace(msgType)
+		}
+		return "", []models.OutgoingMedia{{
+			Type:     mediaType,
+			Name:     strings.TrimSpace(name),
+			MimeType: strings.TrimSpace(mimeType),
+			URL:      firstNonEmpty(strings.TrimSpace(mediaURL), strings.TrimSpace(mediaID)),
+			AESKey:   strings.TrimSpace(aesKey),
+		}}, true
+	default:
+		return "", nil, false
+	}
+}
+
+func (w *WeCom) resolveIncomingMedia(ctx context.Context, media []models.OutgoingMedia) error {
+	for i := range media {
+		if err := w.resolveIncomingMediaItem(ctx, &media[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (w *WeCom) resolveIncomingMediaItem(ctx context.Context, media *models.OutgoingMedia) error {
+	if media == nil || strings.TrimSpace(media.Data) != "" || strings.TrimSpace(media.Path) != "" {
+		return nil
+	}
+	if strings.TrimSpace(media.URL) == "" || strings.TrimSpace(media.AESKey) == "" {
+		return nil
+	}
+	ciphertext, contentType, err := w.downloadMedia(ctx, media.URL)
+	if err != nil {
+		return err
+	}
+	plain, err := decryptECBMedia(ciphertext, media.AESKey)
+	if err != nil {
+		return err
+	}
+	media.Data = base64.StdEncoding.EncodeToString(plain)
+	if strings.TrimSpace(media.Name) == "" {
+		media.Name = inferMediaName(media.Type, media.URL, contentType)
+	}
+	if isGenericMediaHint(media.MimeType) {
+		media.MimeType = detectMimeType(plain, contentType)
+	} else {
+		media.MimeType = detectMimeType(plain, firstNonEmpty(media.MimeType, contentType))
+	}
+	media.FileSize = int64(len(plain))
+	return nil
+}
+
+func (w *WeCom) downloadMedia(ctx context.Context, rawURL string) ([]byte, string, error) {
+	client := http.DefaultClient
+	if w.decider != nil {
+		client = w.decider.ForChannel("wecom").HTTPClient
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("create media download request: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("download media: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", fmt.Errorf("read media download response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("download media failed: status=%d body=%s", resp.StatusCode, string(body))
+	}
+	return body, strings.TrimSpace(resp.Header.Get("Content-Type")), nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func (w *WeCom) handleEventCallback(msg map[string]interface{}) {
@@ -1294,6 +1406,149 @@ func (w *WeCom) reconnect() {
 			"channel_id": w.channelID,
 		})
 		return
+	}
+}
+
+func decryptECBMedia(ciphertext []byte, encodedKey string) ([]byte, error) {
+	key, err := decodeMediaAESKey(encodedKey)
+	if err != nil {
+		return nil, err
+	}
+	if len(ciphertext) == 0 {
+		return nil, fmt.Errorf("media ciphertext is empty")
+	}
+	if len(ciphertext)%aes.BlockSize != 0 {
+		return nil, fmt.Errorf("media ciphertext length %d is not a multiple of %d", len(ciphertext), aes.BlockSize)
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("create aes cipher: %w", err)
+	}
+	plain := make([]byte, len(ciphertext))
+	for start := 0; start < len(ciphertext); start += aes.BlockSize {
+		block.Decrypt(plain[start:start+aes.BlockSize], ciphertext[start:start+aes.BlockSize])
+	}
+	return pkcs7Unpad(plain, aes.BlockSize)
+}
+
+func decodeMediaAESKey(encoded string) ([]byte, error) {
+	encoded = strings.TrimSpace(encoded)
+	if encoded == "" {
+		return nil, fmt.Errorf("media aes key is empty")
+	}
+	if decoded, err := base64.StdEncoding.DecodeString(encoded); err == nil {
+		if len(decoded) == 16 {
+			return decoded, nil
+		}
+		if len(decoded) == 32 {
+			return decodeHexAESKey(string(decoded))
+		}
+	}
+	return decodeHexAESKey(encoded)
+}
+
+func decodeHexAESKey(value string) ([]byte, error) {
+	decoded, err := hexDecodeString(value)
+	if err != nil {
+		return nil, err
+	}
+	if len(decoded) != 16 {
+		return nil, fmt.Errorf("media aes key length %d is invalid", len(decoded))
+	}
+	return decoded, nil
+}
+
+func hexDecodeString(value string) ([]byte, error) {
+	decoded, err := hex.DecodeString(strings.TrimSpace(value))
+	if err != nil {
+		return nil, fmt.Errorf("decode media aes key hex: %w", err)
+	}
+	return decoded, nil
+}
+
+func pkcs7Unpad(data []byte, blockSize int) ([]byte, error) {
+	if len(data) == 0 || len(data)%blockSize != 0 {
+		return nil, fmt.Errorf("invalid pkcs7 padded data length %d", len(data))
+	}
+	padding := int(data[len(data)-1])
+	if padding == 0 || padding > blockSize || padding > len(data) {
+		return nil, fmt.Errorf("invalid pkcs7 padding size %d", padding)
+	}
+	for _, b := range data[len(data)-padding:] {
+		if int(b) != padding {
+			return nil, fmt.Errorf("invalid pkcs7 padding")
+		}
+	}
+	return data[:len(data)-padding], nil
+}
+
+func detectMimeType(data []byte, fallback string) string {
+	if trimmed := strings.TrimSpace(fallback); trimmed != "" {
+		if mimeType := strings.TrimSpace(strings.Split(trimmed, ";")[0]); mimeType != "" {
+			return mimeType
+		}
+	}
+	if len(data) == 0 {
+		return "application/octet-stream"
+	}
+	return http.DetectContentType(data)
+}
+
+func inferMediaName(mediaType, rawURL, contentType string) string {
+	if parsed, err := url.Parse(strings.TrimSpace(rawURL)); err == nil {
+		if base := path.Base(parsed.Path); base != "" && base != "." && base != "/" {
+			return base
+		}
+	}
+	ext := extensionForMimeType(contentType)
+	if ext == "" {
+		ext = extensionForMediaType(mediaType)
+	}
+	return strings.TrimSpace(mediaType) + ext
+}
+
+func extensionForMimeType(contentType string) string {
+	switch detectMimeType(nil, contentType) {
+	case "image/jpeg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/gif":
+		return ".gif"
+	case "audio/mpeg":
+		return ".mp3"
+	case "audio/wav":
+		return ".wav"
+	case "video/mp4":
+		return ".mp4"
+	case "application/pdf":
+		return ".pdf"
+	default:
+		return ".bin"
+	}
+}
+
+func extensionForMediaType(mediaType string) string {
+	switch strings.ToLower(strings.TrimSpace(mediaType)) {
+	case "image":
+		return ".jpg"
+	case "audio":
+		return ".mp3"
+	case "video":
+		return ".mp4"
+	case "file":
+		return ".bin"
+	default:
+		return ".bin"
+	}
+}
+
+func isGenericMediaHint(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "image", "audio", "voice", "video", "file":
+		return true
+	default:
+		return !strings.Contains(value, "/")
 	}
 }
 
