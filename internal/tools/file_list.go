@@ -36,6 +36,8 @@ func (t *FileListTool) Description() string {
 **Parameters:**
 - path: Directory path (optional, default: workspace root)
 - recursive: List recursively (optional, default: false)
+- offset: Start index within the current directory level (0-indexed, optional)
+- limit: Maximum entries to show from the current directory level (optional)
 - ignore: Patterns to ignore (optional, e.g., ["node_modules", "*.log"])`
 }
 
@@ -50,6 +52,14 @@ func (t *FileListTool) Parameters() map[string]interface{} {
 			"recursive": map[string]interface{}{
 				"type":        "boolean",
 				"description": "List recursively (default: false)",
+			},
+			"offset": map[string]interface{}{
+				"type":        "integer",
+				"description": "Start index within the current directory level (0-indexed, optional)",
+			},
+			"limit": map[string]interface{}{
+				"type":        "integer",
+				"description": "Maximum entries to show from the current directory level (optional)",
 			},
 			"ignore": map[string]interface{}{
 				"type":        "array",
@@ -73,6 +83,11 @@ func (t *FileListTool) Execute(args map[string]interface{}) (string, error) {
 	recursive := false
 	if r, ok := args["recursive"].(bool); ok {
 		recursive = r
+	}
+	offset := parseIntArg(args["offset"], 0)
+	limit := parseIntArg(args["limit"], 0)
+	if offset < 0 || limit < 0 {
+		return "", fmt.Errorf("offset and limit cannot be negative")
 	}
 
 	// 解析忽略模式
@@ -110,32 +125,44 @@ func (t *FileListTool) Execute(args map[string]interface{}) (string, error) {
 	var output strings.Builder
 	output.WriteString(fmt.Sprintf("→ %s/\n\n", path))
 
-	count := 0
-	err = t.listDir(fullPath, "", recursive, ignorePatterns, &output, &count)
+	entries, err := t.readEntries(fullPath, ignorePatterns)
 	if err != nil {
 		return "", err
 	}
+	if offset > len(entries) {
+		return "", fmt.Errorf("offset %d exceeds item count %d", offset, len(entries))
+	}
 
-	output.WriteString(fmt.Sprintf("\n[%d items]", count))
+	pageEnd := len(entries)
+	if limit > 0 && offset+limit < pageEnd {
+		pageEnd = offset + limit
+	}
+	pageEntries := entries[offset:pageEnd]
+	pageCount := len(pageEntries)
+	for i, entry := range pageEntries {
+		isLast := i == pageCount-1
+		if err := t.writeEntryTree(fullPath, "", entry, recursive, ignorePatterns, isLast, &output, 1, t.maxFiles); err != nil {
+			output.WriteString(fmt.Sprintf("[error: %v]\n", err))
+		}
+	}
+
+	hasMore := pageEnd < len(entries)
+	output.WriteString(fmt.Sprintf("\n[total=%d, offset=%d, limit=%d, returned=%d, has_more=%t]", len(entries), offset, limit, pageCount, hasMore))
 
 	return output.String(), nil
 }
 
-// listDir 递归列出目录
-func (t *FileListTool) listDir(dir, prefix string, recursive bool, ignore []string, output *strings.Builder, count *int) error {
+func (t *FileListTool) readEntries(dir string, ignore []string) ([]os.DirEntry, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return fmt.Errorf("read directory: %w", err)
+		return nil, fmt.Errorf("read directory: %w", err)
 	}
 
-	// 排序：目录在前，然后按名称排序
 	var dirs, files []os.DirEntry
 	for _, entry := range entries {
-		// 检查是否忽略
 		if t.shouldIgnore(entry.Name(), ignore) {
 			continue
 		}
-
 		if entry.IsDir() {
 			dirs = append(dirs, entry)
 		} else {
@@ -143,48 +170,43 @@ func (t *FileListTool) listDir(dir, prefix string, recursive bool, ignore []stri
 		}
 	}
 
-	// 合并
-	entries = append(dirs, files...)
+	return append(dirs, files...), nil
+}
 
-	for i, entry := range entries {
-		*count++
-		if *count > t.maxFiles {
-			output.WriteString(fmt.Sprintf("\n... (truncated, max %d files)", t.maxFiles))
-			return nil
-		}
-
-		// 判断是否是最后一个
-		isLast := i == len(entries)-1
-
-		// 绘制树形结构
-		connector := "├── "
-		if isLast {
-			connector = "└── "
-		}
-
-		// 文件/目录标记
-		name := entry.Name()
-		if entry.IsDir() {
-			name += "/"
-		}
-
-		output.WriteString(fmt.Sprintf("%s%s%s\n", prefix, connector, name))
-
-		// 递归处理子目录
-		if recursive && entry.IsDir() {
-			newPrefix := prefix + "│   "
-			if isLast {
-				newPrefix = prefix + "    "
-			}
-
-			subDir := filepath.Join(dir, entry.Name())
-			if err := t.listDir(subDir, newPrefix, recursive, ignore, output, count); err != nil {
-				// 忽略权限错误等
-				output.WriteString(fmt.Sprintf("%s[error: %v]\n", newPrefix, err))
-			}
-		}
+func (t *FileListTool) writeEntryTree(rootDir, prefix string, entry os.DirEntry, recursive bool, ignore []string, isLast bool, output *strings.Builder, count, maxFiles int) error {
+	connector := "├── "
+	if isLast {
+		connector = "└── "
 	}
 
+	name := entry.Name()
+	if entry.IsDir() {
+		name += "/"
+	}
+	output.WriteString(fmt.Sprintf("%s%s%s\n", prefix, connector, name))
+	if count >= maxFiles {
+		output.WriteString(fmt.Sprintf("\n... (truncated, max %d files)", maxFiles))
+		return nil
+	}
+	if !recursive || !entry.IsDir() {
+		return nil
+	}
+
+	newPrefix := prefix + "│   "
+	if isLast {
+		newPrefix = prefix + "    "
+	}
+	subDir := filepath.Join(rootDir, entry.Name())
+	entries, err := t.readEntries(subDir, ignore)
+	if err != nil {
+		return err
+	}
+	for i, child := range entries {
+		childLast := i == len(entries)-1
+		if err := t.writeEntryTree(subDir, newPrefix, child, recursive, ignore, childLast, output, count+1, maxFiles); err != nil {
+			output.WriteString(fmt.Sprintf("%s[error: %v]\n", newPrefix, err))
+		}
+	}
 	return nil
 }
 

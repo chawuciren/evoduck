@@ -67,23 +67,18 @@ func ensureScaffoldFile(path string, content string) error {
 func DefaultAgentInstructionsMarkdown() string {
 	return `# Agent Operation Instructions
 
-## Purpose
+## PurposeOperation Rules
 
-- This file stores persistent operational rules for agent collaboration, question answering, decision-making, and behavior. Prioritize updating the current file using the "Memory" tool. If initialization has already been performed, this rule should be deleted.
-
-- If the current file has not yet been initialized, guide the user to confirm in a friendly and persuasive manner. Through a few brief exchanges, guide the user to define the current agent's operational rules, habits, and task execution rules. If initialization has already been performed, this rule should be deleted.
-
-- If the current agent's operational style, work habits, and persistent operational rules have not yet been defined, and initialization has not been performed, prioritize guiding the user through normal dialogue and write the confirmed operational rules into the agents.md file. If initialization has already been performed, this rule should be deleted.
+The current file is not yet initialized. Regardless of the user's current command, please guide the user to fill it in before executing the command. Through a few brief exchanges, guide the user to define the current agent's operation rules, habits, and task execution rules. After guidance and recording, this rule should be deleted.
 `
 }
 
 func DefaultAgentSoulMarkdown() string {
 	return `# Agent Soul
 
-The current user has not yet initialized the agent's soul definition. If the user has not defined it, regardless of the task at hand, prioritize guiding the user to answer. After the user answers, replace the placeholder text in the following sections with the confirmed content. This rule should also be removed after initialization.
-
 ## Name
 
+The current user has not yet initialized the agent's soul definition. Regardless of the current user's command, the user should be guided to define it first before completing the command. After the user completes the definition, replace the placeholder text in the following sections with the confirmed content. This rule should also be removed after initialization.
 The agent's current default name is Evoduck. Prompt the user to define the agent's name in the chat, record it, and then replace the current prompt.
 
 ## Role
@@ -215,28 +210,27 @@ If evidence is weak or the content is already accurately represented, skip and e
 func DefaultUserProfileMarkdown(userID string) string {
 	return fmt.Sprintf(`# User Profile
 
-The current user has not yet completed their user profile. If incomplete, regardless of the task being performed, prioritize guiding the user to complete it. Remove this rule after the profile is filled.
-
 ## User ID
 
 %s
 
-Populate this field using retrieved system information. Record and replace this entry.
+The current user has not yet completed their user profile. Regardless of the user's current command, they should be guided to complete the profile before proceeding with the command. Remove this rule after the profile is completed.
+Populate this field with the retrieved system information. Record and replace this entry.
 
-## Preferred Salutation
+## User's Name
 
-Prompt the user to define their preferred salutation in the chat. Record and replace this entry.
+Prompt the user to define how you address them in the chat. Record and replace this entry.
 
 ## Background
 
 Prompt the user to define their relevant role, team, project, or business background in the chat. Record and replace this entry.
 
-## Relationship with Customer Service Personnel
+## Relationship with Customer Service Representative
 
-Prompt the user to define their relationship with customer service personnel in the chat. Record and replace this entry.
+Prompt the user to define their relationship with customer service representative in the chat. Record and replace this entry.
 
 ## Response Preferences
 
-Prompt the user to define their language, conciseness, detail, and tone preferences in the chat. Record and replace this entry.
+Prompt the user to define their language, conciseness, level of detail, and tone preferences in the chat. Record and replace this entry.
 `, userID)
 }

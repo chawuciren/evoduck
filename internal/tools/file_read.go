@@ -226,11 +226,9 @@ func (t *FileReadTool) formatText(content []byte, offset, limit, startLine, endL
 		output.WriteString(fmt.Sprintf("%4d→%s\n", lineNum, line))
 	}
 
-	output.WriteString(fmt.Sprintf("\n[%d lines total", totalLines))
-	if startIndex > 0 || endIndex < totalLines {
-		output.WriteString(fmt.Sprintf(", showing lines %d-%d", startIndex+1, startIndex+len(lines)))
-	}
-	output.WriteString("]")
+	returned := len(lines)
+	hasMore := endIndex < totalLines
+	output.WriteString(fmt.Sprintf("\n[total=%d, offset=%d, limit=%d, returned=%d, start_line=%d, end_line=%d, has_more=%t]", totalLines, startIndex, limit, returned, startIndex+1, startIndex+returned, hasMore))
 
 	return output.String(), nil
 }

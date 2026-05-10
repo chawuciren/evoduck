@@ -35,6 +35,9 @@ func TestFileReadLineRangeAndRawOutput(t *testing.T) {
 	if !strings.Contains(out, "   2→two") || !strings.Contains(out, "   3→three") || strings.Contains(out, "   1→one") {
 		t.Fatalf("unexpected numbered output:\n%s", out)
 	}
+	if !strings.Contains(out, "[total=5, offset=1, limit=0, returned=2, start_line=2, end_line=3, has_more=true]") {
+		t.Fatalf("missing pagination metadata:\n%s", out)
+	}
 
 	raw, err := tool.Execute(map[string]interface{}{
 		"path":         "note.txt",
@@ -47,6 +50,46 @@ func TestFileReadLineRangeAndRawOutput(t *testing.T) {
 	}
 	if raw != "two\nthree" {
 		t.Fatalf("unexpected raw output: %q", raw)
+	}
+}
+
+func TestFileListCurrentLevelPagination(t *testing.T) {
+	perms, workspace := testFilePermissions(t)
+	if err := os.Mkdir(filepath.Join(workspace, "dir"), 0o755); err != nil {
+		t.Fatalf("mkdir dir: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(workspace, "z-sub"), 0o755); err != nil {
+		t.Fatalf("mkdir z-sub: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "dir", "nested.txt"), []byte("nested"), 0o644); err != nil {
+		t.Fatalf("write nested fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "a.txt"), []byte("a"), 0o644); err != nil {
+		t.Fatalf("write a.txt: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "b.txt"), []byte("b"), 0o644); err != nil {
+		t.Fatalf("write b.txt: %v", err)
+	}
+
+	tool := NewFileListTool(perms)
+	out, err := tool.Execute(map[string]interface{}{
+		"offset": 1,
+		"limit":  2,
+	})
+	if err != nil {
+		t.Fatalf("list current level page: %v", err)
+	}
+	if strings.Contains(out, "nested.txt") {
+		t.Fatalf("expected current-level entries only:\n%s", out)
+	}
+	if !strings.Contains(out, "z-sub/") || !strings.Contains(out, "a.txt") || strings.Contains(out, "dir/") || strings.Contains(out, "b.txt") {
+		t.Fatalf("unexpected page contents:\n%s", out)
+	}
+	if !strings.Contains(out, "[total=4, offset=1, limit=2, returned=2, has_more=true]") {
+		t.Fatalf("missing list pagination metadata:\n%s", out)
+	}
+	if strings.Contains(out, "[4 items]") {
+		t.Fatalf("legacy summary should be replaced:\n%s", out)
 	}
 }
 
