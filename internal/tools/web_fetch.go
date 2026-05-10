@@ -208,48 +208,61 @@ func cleanHTMLContent(htmlStr string, readability bool) string {
 }
 
 func removeElements(htmlStr string, tags []string) string {
-	lower := strings.ToLower(htmlStr)
 	for _, tag := range tags {
-		result := ""
+		var result strings.Builder
+		result.Grow(len(htmlStr))
 		remaining := htmlStr
 		for {
 			openTag := "<" + tag
 			closeTag := "</" + tag + ">"
-			_ = lower
 
-			idx := strings.Index(strings.ToLower(remaining), openTag)
+			idx := indexASCIIInsensitive(remaining, openTag)
 			if idx < 0 {
-				result += remaining
+				result.WriteString(remaining)
 				break
 			}
 
-			result += remaining[:idx]
+			result.WriteString(remaining[:idx])
 			remaining = remaining[idx:]
 
-			endIdx := strings.Index(strings.ToLower(remaining), closeTag)
+			endIdx := indexASCIIInsensitive(remaining, closeTag)
 			if endIdx < 0 {
 				endIdx = strings.Index(remaining[1:], ">")
 				if endIdx < 0 {
-					result += remaining
+					result.WriteString(remaining)
 					break
 				}
 				remaining = remaining[endIdx+2:]
 				continue
 			}
-			remaining = remaining[endIdx+len(closeTag):]
+
+			next := endIdx + len(closeTag)
+			if next > len(remaining) {
+				result.WriteString(remaining)
+				break
+			}
+			remaining = remaining[next:]
 		}
-		htmlStr = result
+		htmlStr = result.String()
 	}
 	return htmlStr
 }
 
 func removeClassElements(htmlStr string, classes []string) string {
 	for _, class := range classes {
-		classAttr := `class="` + class + `"`
-		classAttr2 := `class='` + class + `'`
-		_ = classAttr2
+		classAttrs := []string{
+			`class="` + class + `"`,
+			`class='` + class + `'`,
+		}
+
 		for {
-			idx := strings.Index(strings.ToLower(htmlStr), strings.ToLower(classAttr))
+			idx := -1
+			for _, classAttr := range classAttrs {
+				found := indexASCIIInsensitive(htmlStr, classAttr)
+				if found >= 0 && (idx < 0 || found < idx) {
+					idx = found
+				}
+			}
 			if idx < 0 {
 				break
 			}
@@ -274,15 +287,62 @@ func removeClassElements(htmlStr string, classes []string) string {
 			}
 
 			closeTag := "</" + tagName + ">"
-			endIdx := strings.Index(strings.ToLower(htmlStr[idx:]), closeTag)
+			endIdx := indexASCIIInsensitive(htmlStr[idx:], closeTag)
 			if endIdx < 0 {
 				htmlStr = htmlStr[:start]
 				break
 			}
-			htmlStr = htmlStr[:start] + htmlStr[idx+endIdx+len(closeTag):]
+
+			next := idx + endIdx + len(closeTag)
+			if next > len(htmlStr) {
+				htmlStr = htmlStr[:start]
+				break
+			}
+			htmlStr = htmlStr[:start] + htmlStr[next:]
 		}
 	}
 	return htmlStr
+}
+
+func indexASCIIInsensitive(s, substr string) int {
+	if len(substr) == 0 {
+		return 0
+	}
+	if len(substr) > len(s) {
+		return -1
+	}
+
+	first := lowerASCII(substr[0])
+	limit := len(s) - len(substr)
+	for i := 0; i <= limit; i++ {
+		if lowerASCII(s[i]) != first {
+			continue
+		}
+		if hasASCIIInsensitivePrefix(s[i:], substr) {
+			return i
+		}
+	}
+
+	return -1
+}
+
+func hasASCIIInsensitivePrefix(s, prefix string) bool {
+	if len(prefix) > len(s) {
+		return false
+	}
+	for i := 0; i < len(prefix); i++ {
+		if lowerASCII(s[i]) != lowerASCII(prefix[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func lowerASCII(b byte) byte {
+	if b >= 'A' && b <= 'Z' {
+		return b + ('a' - 'A')
+	}
+	return b
 }
 
 func stripTags(htmlStr string) string {
