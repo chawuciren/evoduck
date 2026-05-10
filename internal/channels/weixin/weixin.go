@@ -40,6 +40,11 @@ type WeixinBridge struct {
 	cancel    context.CancelFunc
 }
 
+var (
+	weixinGetUpdatesRetryDelay             = 2 * time.Second
+	weixinMaxConsecutiveGetUpdatesFailures = 5
+)
+
 type weixinAPI interface {
 	SetAuth(token, accountID string)
 	SendMessage(ctx context.Context, toUserID, contextToken string, items []MessageItem) error
@@ -491,10 +496,12 @@ func (w *WeixinBridge) pollLoop(ctx context.Context) {
 	defer ticker.Stop()
 
 	pollCount := 0
+	consecutiveFailures := 0
 
 	for {
 		select {
 		case <-ctx.Done():
+			w.markPollLoopStopped()
 			logger.Info("Weixin poll loop stopped", logger.Fields{
 				"channel_id": w.channelID,
 			})
@@ -512,15 +519,35 @@ func (w *WeixinBridge) pollLoop(ctx context.Context) {
 		pollCount++
 
 		if err != nil {
+			consecutiveFailures++
 			logger.Error("Weixin getupdates error", logger.Fields{
-				"channel_id": w.channelID,
-				"error":      err.Error(),
+				"channel_id":               w.channelID,
+				"error":                    err.Error(),
+				"consecutive_failures":     consecutiveFailures,
+				"max_consecutive_failures": weixinMaxConsecutiveGetUpdatesFailures,
 			})
 
-			time.Sleep(2 * time.Second)
+			if consecutiveFailures >= weixinMaxConsecutiveGetUpdatesFailures {
+				w.markPollLoopStopped()
+				logger.Error("Weixin poll loop stopped after consecutive getupdates failures", logger.Fields{
+					"channel_id":               w.channelID,
+					"consecutive_failures":     consecutiveFailures,
+					"max_consecutive_failures": weixinMaxConsecutiveGetUpdatesFailures,
+				})
+				return
+			}
+
+			if !waitForPollRetry(ctx, weixinGetUpdatesRetryDelay) {
+				w.markPollLoopStopped()
+				logger.Info("Weixin poll loop stopped", logger.Fields{
+					"channel_id": w.channelID,
+				})
+				return
+			}
 			continue
 		}
 
+		consecutiveFailures = 0
 		w.updateBuf = resp.GetUpdatesBuf
 
 		if len(resp.Msgs) > 0 {
@@ -530,6 +557,30 @@ func (w *WeixinBridge) pollLoop(ctx context.Context) {
 			})
 			w.processMessages(resp.Msgs)
 		}
+	}
+}
+
+// processMessages 处理消息
+func (w *WeixinBridge) markPollLoopStopped() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.running = false
+	w.cancel = nil
+}
+
+func waitForPollRetry(ctx context.Context, delay time.Duration) bool {
+	if delay <= 0 {
+		return true
+	}
+
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 

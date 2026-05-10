@@ -153,7 +153,7 @@ func (c *APIClient) GetUpdates(ctx context.Context, buf string) (*GetUpdatesResp
 		return nil, err
 	}
 
-	if resp.Ret != 0 {
+	if resp.Ret != 0 || resp.ErrCode != 0 {
 		logger.Error("Weixin API GetUpdates failed", logger.Fields{
 			"ret":     resp.Ret,
 			"errcode": resp.ErrCode,

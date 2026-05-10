@@ -3,8 +3,13 @@ package weixin
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/chawuciren/evoduck/pkg/models"
 )
@@ -15,6 +20,8 @@ type recordingTypingAPI struct {
 	messages     [][]MessageItem
 	downloadBody []byte
 	contentType  string
+	getUpdates   func(context.Context, string) (*GetUpdatesResponse, error)
+	updateCalls  int
 }
 
 func (r *recordingTypingAPI) SendMessage(_ context.Context, _ string, _ string, items []MessageItem) error {
@@ -37,7 +44,11 @@ func (r *recordingTypingAPI) SendTyping(_ context.Context, _ string, _ string, s
 
 func (r *recordingTypingAPI) SetAuth(string, string) {}
 
-func (r *recordingTypingAPI) GetUpdates(context.Context, string) (*GetUpdatesResponse, error) {
+func (r *recordingTypingAPI) GetUpdates(ctx context.Context, buf string) (*GetUpdatesResponse, error) {
+	r.updateCalls++
+	if r.getUpdates != nil {
+		return r.getUpdates(ctx, buf)
+	}
 	return nil, nil
 }
 
@@ -273,5 +284,63 @@ func TestHandleEventSendsOnlyFinalMessage(t *testing.T) {
 	}
 	if got := api.messages[0][0].TextItem.Text; got != "final answer" {
 		t.Fatalf("unexpected final message: %q", got)
+	}
+}
+
+func TestGetUpdatesTreatsErrCodeAsFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/ilink/bot/getupdates" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"errcode":-14,"errmsg":"session timeout"}`))
+	}))
+	defer server.Close()
+
+	client := NewAPIClient(WeixinConfig{
+		APIBaseURL:        server.URL,
+		GetUpdatesTimeout: time.Second,
+	}, nil)
+	client.SetAuth("token", "weixin-cs")
+
+	_, err := client.GetUpdates(context.Background(), "")
+	if err == nil {
+		t.Fatal("expected getupdates error")
+	}
+	if !strings.Contains(err.Error(), "errcode=-14") {
+		t.Fatalf("expected errcode in error, got %v", err)
+	}
+}
+
+func TestPollLoopStopsAfterConsecutiveGetUpdatesFailures(t *testing.T) {
+	prevRetryDelay := weixinGetUpdatesRetryDelay
+	prevMaxFailures := weixinMaxConsecutiveGetUpdatesFailures
+	weixinGetUpdatesRetryDelay = time.Millisecond
+	weixinMaxConsecutiveGetUpdatesFailures = 3
+	defer func() {
+		weixinGetUpdatesRetryDelay = prevRetryDelay
+		weixinMaxConsecutiveGetUpdatesFailures = prevMaxFailures
+	}()
+
+	api := &recordingTypingAPI{
+		getUpdates: func(context.Context, string) (*GetUpdatesResponse, error) {
+			return nil, errors.New("session timeout")
+		},
+	}
+	bridge := New(WeixinConfig{}, nil)
+	bridge.api = api
+	bridge.channelID = "weixin-cs"
+	bridge.running = true
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	bridge.pollLoop(ctx)
+
+	if api.updateCalls != 3 {
+		t.Fatalf("expected 3 getupdates attempts, got %d", api.updateCalls)
+	}
+	if bridge.running {
+		t.Fatal("expected bridge to stop after consecutive getupdates failures")
 	}
 }
