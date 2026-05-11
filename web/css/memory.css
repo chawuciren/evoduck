@@ -177,3 +177,27 @@
         min-height: 280px;
     }
 }
+
+@media (max-width: 767px) {
+    .memory-layout,
+    .memory-list {
+        gap: 16px;
+    }
+
+    .memory-item {
+        padding: 16px;
+    }
+
+    .memory-preview-shell,
+    .memory-preview-empty {
+        padding: 18px;
+    }
+
+    .memory-preview-title {
+        font-size: 20px;
+    }
+
+    .memory-preview-content {
+        max-height: 280px;
+    }
+}

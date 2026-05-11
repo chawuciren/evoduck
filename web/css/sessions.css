@@ -76,3 +76,26 @@
     background: rgba(62, 13, 24, 0.62);
     color: #ffe1e8;
 }
+
+@media (max-width: 767px) {
+    .session-item {
+        padding: 18px 16px;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 14px;
+    }
+
+    .session-actions {
+        flex-wrap: wrap;
+    }
+
+    .session-btn {
+        flex: 1 1 140px;
+        text-align: center;
+    }
+
+    .session-meta {
+        line-height: 1.6;
+        word-break: break-word;
+    }
+}

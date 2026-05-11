@@ -244,3 +244,24 @@
         grid-template-columns: 1fr;
     }
 }
+
+@media (max-width: 767px) {
+    .schedule-item {
+        gap: 14px;
+    }
+
+    .schedule-actions {
+        justify-content: stretch;
+    }
+
+    .schedule-actions .session-btn {
+        flex: 1 1 140px;
+    }
+
+    .schedule-run-top,
+    .schedule-checkbox-row,
+    .schedule-row-block {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}

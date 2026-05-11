@@ -588,15 +588,50 @@
 }
 
 @media (max-width: 768px) {
+    .chat-messages {
+        padding: 20px 16px 16px;
+    }
+
+    .message {
+        margin-bottom: 18px;
+    }
+
+    .message-content {
+        max-width: 92%;
+        padding: 14px 16px;
+        font-size: 14px;
+    }
+
+    .log-message-content,
+    .tool-call-card,
+    .thinking-card {
+        max-width: 100%;
+    }
+
     .chat-scroll-bottom-btn {
-        bottom: 96px;
+        bottom: 132px;
         padding: 9px 14px;
         font-size: 11px;
         letter-spacing: 0.1em;
     }
 
+    .typing-indicator {
+        padding: 10px 16px;
+        font-size: 11px;
+    }
+
     .chat-input {
+        padding: 18px 16px calc(18px + env(safe-area-inset-bottom, 0px));
+        gap: 10px;
+    }
+
+    .chat-input::before {
+        left: 16px;
+    }
+
+    .chat-input-row {
         flex-wrap: wrap;
+        gap: 10px;
     }
 
     .chat-input-shell {
@@ -604,9 +639,76 @@
         width: 100%;
     }
 
+    .terminal-icon-btn {
+        min-width: 48px;
+        width: 48px;
+        height: 48px;
+        padding: 0;
+        font-size: 18px;
+    }
+
+    #sendBtn {
+        min-height: 48px;
+        padding: 12px 18px;
+        margin-left: auto;
+    }
+
+    .pending-media-tray {
+        flex-direction: column;
+        gap: 8px;
+    }
+
     .pending-media-item {
         min-width: 100%;
         max-width: 100%;
+        align-items: flex-start;
+    }
+
+    .pending-media-remove {
+        align-self: flex-start;
+    }
+
+    .agent-selector {
+        min-width: 100%;
+    }
+
+    .message-media-item img,
+    .message-media-item video {
+        max-height: 240px;
+    }
+
+    .message.assistant .message-content pre {
+        padding: 12px;
+    }
+}
+
+@media (max-width: 520px) {
+    .chat-scroll-bottom-btn {
+        bottom: 148px;
+        width: calc(100% - 32px);
+        justify-content: center;
+    }
+
+    .chat-input-row {
+        display: grid;
+        grid-template-columns: 48px 48px minmax(0, 1fr);
+        align-items: stretch;
+    }
+
+    .chat-input-shell {
+        order: initial;
+        width: auto;
+        grid-column: 1 / -1;
+    }
+
+    #sendBtn {
+        grid-column: 3;
+        width: 100%;
+        min-height: 46px;
+    }
+
+    .message-content {
+        max-width: 96%;
     }
 }
 

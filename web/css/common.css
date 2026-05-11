@@ -900,3 +900,206 @@ body::before {
     letter-spacing: 0.12em;
     font-weight: 700;
 }
+
+.app-container {
+    min-height: 100vh;
+    min-height: 100dvh;
+}
+
+.mobile-panel-toggle,
+.app-overlay {
+    display: none;
+}
+
+@media (max-width: 1199px) {
+    body {
+        width: 100%;
+        min-height: 100vh;
+        min-height: 100dvh;
+        overflow-x: hidden;
+    }
+
+    body.overlay-open {
+        overflow: hidden;
+    }
+
+    .sidebar,
+    .main-content,
+    .right-panel,
+    .connection-page {
+        height: 100vh;
+        height: 100dvh;
+    }
+
+    .app-container.connected {
+        position: relative;
+        min-height: 100vh;
+        min-height: 100dvh;
+    }
+
+    .mobile-panel-toggle {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        position: fixed;
+        top: 18px;
+        z-index: 220;
+        width: 48px;
+        height: 48px;
+        border-radius: 999px;
+        border: 1px solid rgba(86, 247, 177, 0.24);
+        background: rgba(6, 11, 20, 0.94);
+        color: var(--text-main);
+        box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+        cursor: pointer;
+        font-size: 20px;
+        line-height: 1;
+        backdrop-filter: blur(14px);
+    }
+
+    .mobile-panel-toggle-left {
+        left: 16px;
+    }
+
+    .mobile-panel-toggle-right {
+        right: 16px;
+    }
+
+    .app-overlay {
+        appearance: none;
+        border: none;
+        padding: 0;
+        position: fixed;
+        inset: 0;
+        z-index: 180;
+        background: rgba(3, 8, 15, 0.58);
+        backdrop-filter: blur(2px);
+        cursor: pointer;
+    }
+
+    body.overlay-open .app-overlay {
+        display: block;
+    }
+
+    .sidebar {
+        width: min(320px, calc(100vw - 44px));
+        max-width: 100%;
+        transform: translateX(-100%);
+        transition: transform 0.22s ease;
+        z-index: 210;
+    }
+
+    body.sidebar-open .sidebar {
+        transform: translateX(0);
+    }
+
+    .right-panel {
+        width: min(360px, calc(100vw - 32px));
+        max-width: 100%;
+        transform: translateX(100%);
+        transition: transform 0.22s ease;
+        z-index: 210;
+        box-shadow: inset 1px 0 0 rgba(53, 214, 255, 0.08), -14px 0 36px rgba(0, 0, 0, 0.4);
+    }
+
+    body.inspector-open .right-panel {
+        transform: translateX(0);
+    }
+
+    .main-content {
+        position: relative;
+        left: auto;
+        right: auto;
+        top: auto;
+        width: 100%;
+        min-height: 100vh;
+        min-height: 100dvh;
+    }
+
+    .page-header {
+        padding: 24px 28px 20px;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        gap: 14px;
+    }
+
+    .page-header h1 {
+        font-size: 22px;
+        max-width: calc(100% - 120px);
+        padding-top: 4px;
+    }
+
+    .page-header-actions {
+        width: 100%;
+        justify-content: flex-start;
+        gap: 12px;
+    }
+
+    .page-content {
+        padding: 28px 28px 32px;
+    }
+}
+
+@media (max-width: 767px) {
+    .mobile-panel-toggle {
+        top: 14px;
+        width: 44px;
+        height: 44px;
+    }
+
+    .mobile-panel-toggle-left {
+        left: 12px;
+    }
+
+    .mobile-panel-toggle-right {
+        right: 12px;
+    }
+
+    .sidebar {
+        width: min(304px, calc(100vw - 28px));
+    }
+
+    .right-panel {
+        width: min(100vw, 420px);
+    }
+
+    .sidebar-header {
+        padding-top: 20px;
+    }
+
+    .sidebar-nav {
+        padding: 22px 12px 18px;
+    }
+
+    .nav-item {
+        padding: 13px 14px;
+    }
+
+    .page-header {
+        padding: 68px 16px 18px;
+        gap: 12px;
+    }
+
+    .page-header h1 {
+        font-size: 19px;
+        max-width: 100%;
+        line-height: 1.25;
+    }
+
+    .page-header-actions {
+        gap: 10px;
+    }
+
+    .page-content {
+        padding: 20px 16px 24px;
+    }
+
+    .action-btn {
+        padding: 10px 16px;
+        font-size: 12px;
+    }
+
+    .header-chip {
+        letter-spacing: 0.12em;
+    }
+}

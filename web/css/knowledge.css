@@ -513,3 +513,48 @@
         grid-template-columns: 1fr;
     }
 }
+
+@media (max-width: 767px) {
+    .search-bar {
+        width: 100%;
+        flex-wrap: wrap;
+    }
+
+    .search-bar input {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .knowledge-toolbar {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .knowledge-toolbar-input {
+        min-width: 0;
+        width: 100%;
+    }
+
+    .knowledge-item {
+        padding: 16px;
+    }
+
+    .knowledge-editor-actions {
+        flex-direction: column;
+    }
+
+    .knowledge-editor-actions .action-btn {
+        width: 100%;
+    }
+
+    .knowledge-modal {
+        width: calc(100vw - 24px);
+        max-height: calc(100dvh - 24px);
+        padding: 18px;
+    }
+
+    .knowledge-modal-header {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+}

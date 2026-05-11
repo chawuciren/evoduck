@@ -247,5 +247,20 @@
 
     .skills-grid {
         grid-template-columns: 1fr;
+        gap: 16px;
+    }
+
+    .skill-card {
+        padding: 18px;
+    }
+
+    .skill-preview-shell,
+    .skill-preview-empty,
+    .skill-preview-loading {
+        padding: 18px;
+    }
+
+    .skill-content-preview {
+        max-height: 280px;
     }
 }

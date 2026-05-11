@@ -392,3 +392,43 @@
     font-size: 12px;
     line-height: 1.4;
 }
+
+@media (max-width: 767px) {
+    .settings-toolbar,
+    .settings-editor-header,
+    .settings-complex-toolbar,
+    .settings-subsection-header,
+    .settings-field-header,
+    .settings-complex-card-header,
+    .settings-row,
+    .settings-kv-row {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .settings-row {
+        gap: 10px;
+    }
+
+    .settings-input,
+    .settings-field-grid,
+    .settings-complex-grid,
+    .settings-json-editor,
+    .settings-yaml-editor {
+        width: 100%;
+    }
+
+    .settings-field-grid,
+    .settings-complex-grid,
+    .settings-kv-row {
+        grid-template-columns: 1fr;
+    }
+
+    .settings-section {
+        padding: 18px;
+    }
+
+    .settings-yaml-editor {
+        min-height: 360px;
+    }
+}

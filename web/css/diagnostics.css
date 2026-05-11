@@ -310,4 +310,21 @@
     .diagnostics-table {
         min-width: 0;
     }
+
+    .diagnostics-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .diagnostics-row,
+    .diagnostics-agent-header,
+    .diagnostics-mini-item,
+    .diagnostics-issue-item,
+    .diagnostics-inline-issue {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .diagnostics-row-value {
+        text-align: left;
+    }
 }

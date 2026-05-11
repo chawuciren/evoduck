@@ -150,3 +150,26 @@
     color: rgba(216, 255, 231, 0.88);
     font: inherit;
 }
+
+@media (max-width: 767px) {
+    .log-controls {
+        width: 100%;
+        align-items: stretch;
+    }
+
+    .log-filter,
+    .log-level-select,
+    .log-controls button {
+        width: 100%;
+    }
+
+    .log-container {
+        max-height: calc(100dvh - 240px);
+        padding: 12px;
+    }
+
+    .log-entry-header {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+}

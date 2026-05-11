@@ -95,3 +95,30 @@
 .status-badge.inactive::before {
     content: "halt · ";
 }
+
+@media (max-width: 767px) {
+    .agents-grid {
+        grid-template-columns: 1fr;
+        gap: 16px;
+    }
+
+    .agent-card {
+        padding: 18px;
+    }
+
+    .agent-header {
+        gap: 12px;
+        align-items: flex-start;
+    }
+
+    .agent-avatar {
+        margin-right: 0;
+        width: 42px;
+        height: 42px;
+        font-size: 20px;
+    }
+
+    .agent-status {
+        flex-wrap: wrap;
+    }
+}
