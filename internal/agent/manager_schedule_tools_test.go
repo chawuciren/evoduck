@@ -432,6 +432,109 @@ func TestEmployeeToolOverrideRestrictsDefaultTools(t *testing.T) {
 	}
 }
 
+func TestSubagentToolRegistrationByRole(t *testing.T) {
+	workspace := t.TempDir()
+	llmReg, err := llm.NewRegistry(config.LLMConfig{
+		DefaultProvider: "stub",
+		DefaultModel:    "stub-model",
+		Providers:       map[string]config.ProviderConfig{},
+	}, nil)
+	if err != nil {
+		t.Fatalf("new llm registry: %v", err)
+	}
+	if err := llmReg.RegisterDynamic("stub", &scheduleTestProvider{}); err != nil {
+		t.Fatalf("register provider: %v", err)
+	}
+
+	mgr := NewManager(llmReg, workspace, workspace, config.BackendCallConfig{}, config.SessionToolConfig{}, config.MemoryConfig{}, nil, nil, nil)
+	for _, tc := range []struct {
+		agentID string
+		role    models.Role
+	}{
+		{agentID: "agent-customer", role: models.RoleCustomer},
+		{agentID: "agent-employee", role: models.RoleEmployee},
+	} {
+		if err := mgr.Register(tc.agentID, config.AgentConfig{
+			Workspace: workspace,
+			Provider:  "stub",
+			Model:     "stub-model",
+			Role:      string(tc.role),
+		}); err != nil {
+			t.Fatalf("register %s: %v", tc.agentID, err)
+		}
+	}
+
+	userAgent, err := mgr.Get("agent-customer")
+	if err != nil {
+		t.Fatalf("get user agent: %v", err)
+	}
+	for _, name := range []string{"subagent_list", "subagent_status", "subagent_result"} {
+		if _, err := userAgent.Tools.Get(name); err != nil {
+			t.Fatalf("expected default subagent tool %s for user role: %v", name, err)
+		}
+	}
+	for _, name := range []string{"subagent_start_internal", "subagent_start_external", "subagent_cancel"} {
+		if _, err := userAgent.Tools.Get(name); err == nil {
+			t.Fatalf("did not expect privileged subagent tool %s for user role", name)
+		}
+	}
+
+	employeeAgent, err := mgr.Get("agent-employee")
+	if err != nil {
+		t.Fatalf("get employee agent: %v", err)
+	}
+	for _, name := range []string{"subagent_list", "subagent_status", "subagent_result", "subagent_start_internal", "subagent_start_external", "subagent_cancel"} {
+		if _, err := employeeAgent.Tools.Get(name); err != nil {
+			t.Fatalf("expected subagent tool %s for employee role: %v", name, err)
+		}
+	}
+}
+
+func TestSubagentToolOverrideKeepsAllowlistedEntries(t *testing.T) {
+	workspace := t.TempDir()
+	llmReg, err := llm.NewRegistry(config.LLMConfig{
+		DefaultProvider: "stub",
+		DefaultModel:    "stub-model",
+		Providers:       map[string]config.ProviderConfig{},
+	}, nil)
+	if err != nil {
+		t.Fatalf("new llm registry: %v", err)
+	}
+	if err := llmReg.RegisterDynamic("stub", &scheduleTestProvider{}); err != nil {
+		t.Fatalf("register provider: %v", err)
+	}
+
+	mgr := NewManager(llmReg, workspace, workspace, config.BackendCallConfig{}, config.SessionToolConfig{}, config.MemoryConfig{}, nil, nil, nil)
+	if err := mgr.Register("agent-employee-allowlist", config.AgentConfig{
+		Workspace: workspace,
+		Provider:  "stub",
+		Model:     "stub-model",
+		Role:      string(models.RoleEmployee),
+		Permissions: config.AgentPermissionConfig{
+			AuthorizedTools: []string{"subagent_status", "subagent_cancel"},
+		},
+	}); err != nil {
+		t.Fatalf("register agent: %v", err)
+	}
+
+	ag, err := mgr.Get("agent-employee-allowlist")
+	if err != nil {
+		t.Fatalf("get employee agent: %v", err)
+	}
+	if _, err := ag.Tools.Get("subagent_status"); err != nil {
+		t.Fatalf("expected allowlisted tool subagent_status: %v", err)
+	}
+	if _, err := ag.Tools.Get("subagent_cancel"); err != nil {
+		t.Fatalf("expected allowlisted tool subagent_cancel: %v", err)
+	}
+	if _, err := ag.Tools.Get("subagent_list"); err == nil {
+		t.Fatal("expected non-allowlisted subagent_list to be hidden")
+	}
+	if _, err := ag.Tools.Get("time"); err == nil {
+		t.Fatal("expected non-allowlisted time tool to be hidden")
+	}
+}
+
 func TestBuildSourceContextCurationPromptIncludesTargetArtifacts(t *testing.T) {
 	root := t.TempDir()
 	llmReg, err := llm.NewRegistry(config.LLMConfig{
@@ -466,16 +569,16 @@ func TestBuildSourceContextCurationPromptIncludesTargetArtifacts(t *testing.T) {
 		t.Fatalf("mkdir agent dir: %v", err)
 	}
 	for path, content := range map[string]string{
-		filepath.Join(memoryDir, "2026-05-07.md"):        "recent daily note 1",
-		filepath.Join(memoryDir, "2026-05-08.md"):        "recent daily note 2",
-		filepath.Join(userDir, "USER.md"):               "preferred name: Alice",
-		filepath.Join(userDir, "MEMORY.md"):             "durable preference: concise replies",
-		filepath.Join(agentDir, "AGENTS.md"):            "agent rule: verify targets before writing",
-		filepath.Join(agentDir, "SOUL.md"):              "mission: keep memory tidy",
-		filepath.Join(agentDir, "TOOLS.md"):             "tool rule: prefer memory tools",
-		filepath.Join(agentDir, "IDENTITY.md"):          "identity note",
-		filepath.Join(agentDir, "HEARTBEAT.md"):         "heartbeat note",
-		filepath.Join(agentDir, "BOOTSTRAP.md"):         "bootstrap note",
+		filepath.Join(memoryDir, "2026-05-07.md"): "recent daily note 1",
+		filepath.Join(memoryDir, "2026-05-08.md"): "recent daily note 2",
+		filepath.Join(userDir, "USER.md"):         "preferred name: Alice",
+		filepath.Join(userDir, "MEMORY.md"):       "durable preference: concise replies",
+		filepath.Join(agentDir, "AGENTS.md"):      "agent rule: verify targets before writing",
+		filepath.Join(agentDir, "SOUL.md"):        "mission: keep memory tidy",
+		filepath.Join(agentDir, "TOOLS.md"):       "tool rule: prefer memory tools",
+		filepath.Join(agentDir, "IDENTITY.md"):    "identity note",
+		filepath.Join(agentDir, "HEARTBEAT.md"):   "heartbeat note",
+		filepath.Join(agentDir, "BOOTSTRAP.md"):   "bootstrap note",
 	} {
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			t.Fatalf("write %s: %v", path, err)
