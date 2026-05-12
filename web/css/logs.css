@@ -12,9 +12,9 @@
     gap: 10px;
     padding: 8px 12px;
     border-radius: 10px;
-    border: 1px solid rgba(53, 214, 255, 0.16);
-    background: linear-gradient(180deg, rgba(11, 20, 34, 0.92) 0%, rgba(8, 14, 24, 0.9) 100%);
-    box-shadow: inset 0 0 0 1px rgba(53, 214, 255, 0.03);
+    border: 1px solid var(--control-border);
+    background: var(--control-surface);
+    box-shadow: var(--control-shadow-inset);
 }
 
 .log-filter-label {
@@ -32,10 +32,10 @@
     min-width: 150px;
     padding: 9px 38px 9px 12px;
     background:
-        linear-gradient(45deg, transparent 50%, rgba(86, 247, 177, 0.82) 50%) calc(100% - 18px) calc(50% - 2px) / 6px 6px no-repeat,
-        linear-gradient(135deg, rgba(86, 247, 177, 0.82) 50%, transparent 50%) calc(100% - 13px) calc(50% - 2px) / 6px 6px no-repeat,
-        rgba(8, 14, 24, 0.98);
-    border: 1px solid rgba(86, 247, 177, 0.14);
+        linear-gradient(45deg, transparent 50%, var(--select-arrow-top) 50%) calc(100% - 18px) calc(50% - 2px) / 6px 6px no-repeat,
+        linear-gradient(135deg, var(--select-arrow-bottom) 50%, transparent 50%) calc(100% - 13px) calc(50% - 2px) / 6px 6px no-repeat,
+        var(--control-surface);
+    border: 1px solid var(--control-border);
     border-radius: 8px;
     color: var(--text-main);
     font-size: 12px;
@@ -48,13 +48,12 @@
 }
 
 .log-level-select:hover {
-    border-color: rgba(86, 247, 177, 0.24);
-    background-color: rgba(10, 18, 31, 1);
+    border-color: var(--control-border-strong);
 }
 
 .log-level-select:focus {
-    border-color: rgba(86, 247, 177, 0.34);
-    box-shadow: 0 0 0 1px rgba(86, 247, 177, 0.18), 0 0 16px rgba(86, 247, 177, 0.08);
+    border-color: var(--control-border-strong);
+    box-shadow: var(--control-shadow-focus);
 }
 
 .log-level-select option {
@@ -64,10 +63,10 @@
 
 .log-controls button {
     padding: 8px 14px;
-    background: rgba(11, 20, 34, 0.9);
-    border: 1px solid rgba(53, 214, 255, 0.18);
+    background: var(--ghost-button-surface);
+    border: 1px solid var(--ghost-button-border);
     border-radius: 8px;
-    color: var(--accent-2);
+    color: var(--ghost-button-text);
     font-size: 12px;
     cursor: pointer;
     transition: all 0.2s;
@@ -76,14 +75,14 @@
 }
 
 .log-controls button:hover {
-    background: rgba(14, 29, 39, 0.95);
-    color: #ebfbff;
-    box-shadow: 4px 4px 0 rgba(3, 8, 15, 0.88);
+    background: var(--ghost-button-surface-hover);
+    color: var(--ghost-button-text-hover);
+    box-shadow: var(--ghost-button-shadow);
 }
 
 .log-container {
-    background: linear-gradient(180deg, rgba(8, 14, 24, 0.96) 0%, rgba(5, 8, 22, 0.94) 100%);
-    border: 1px solid rgba(86, 247, 177, 0.14);
+    background: var(--panel-card-surface);
+    border: 1px solid var(--panel-card-border);
     border-radius: var(--radius-panel);
     padding: 16px;
     font-family: 'Consolas', 'Monaco', monospace;
@@ -100,9 +99,10 @@
 .log-entry {
     padding: 12px 14px;
     border-radius: 10px;
-    background: rgba(11, 20, 34, 0.88);
-    border: 1px solid rgba(86, 247, 177, 0.08);
-    border-left: 3px solid rgba(86, 247, 177, 0.18);
+    /* background: rgba(11, 20, 34, 0.88); */
+      background: var(--panel-card-surface);
+    border: 1px solid rgba(var(--accent-rgb), 0.08);
+    border-left: 3px solid rgba(var(--accent-rgb), 0.18);
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.015);
 }
 
@@ -112,16 +112,16 @@
 
 .log-entry.warn {
     color: var(--accent-warn);
-    background: rgba(255, 209, 102, 0.08);
-    border-color: rgba(255, 209, 102, 0.16);
-    border-left-color: rgba(255, 209, 102, 0.38);
+    background: var(--panel-warn-surface);
+    border-color: var(--panel-warn-border);
+    border-left-color: color-mix(in srgb, var(--accent-warn) 38%, transparent);
 }
 
 .log-entry.error {
-    color: #ffc1cf;
-    background: rgba(255, 107, 138, 0.08);
-    border-color: rgba(255, 107, 138, 0.15);
-    border-left-color: rgba(255, 107, 138, 0.32);
+    color: var(--panel-danger-text);
+    background: var(--panel-danger-surface);
+    border-color: var(--panel-danger-border);
+    border-left-color: rgba(var(--danger-rgb), 0.32);
 }
 
 .log-entry-header {
@@ -130,7 +130,7 @@
     gap: 12px;
     margin-bottom: 8px;
     padding-bottom: 8px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    border-bottom: 1px solid var(--panel-divider-soft);
 }
 
 .log-time {
@@ -147,7 +147,7 @@
     margin: 0;
     white-space: pre-wrap;
     word-break: break-word;
-    color: rgba(216, 255, 231, 0.88);
+    color: color-mix(in srgb, var(--text-main) 88%, transparent);
     font: inherit;
 }
 

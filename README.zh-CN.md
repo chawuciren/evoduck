@@ -160,6 +160,8 @@ git clone https://github.com/chawuciren/evoduck.git
 cd evoduck
 go mod download
 go build -o evoduck ./cmd/evoduck
+# 本地运行
+go run .\cmd\evoduck\main.go run
 ```
 
 Windows PowerShell：

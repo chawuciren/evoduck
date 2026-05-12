@@ -7,7 +7,7 @@
 .connection-page {
     width: 100vw;
     height: 100vh;
-    background: linear-gradient(180deg, rgba(5, 8, 22, 1) 0%, rgba(9, 17, 31, 1) 100%);
+    background: var(--main-surface);
     display: flex;
     justify-content: center;
     align-items: center;
@@ -23,11 +23,11 @@
 
 .connection-box {
     width: 500px;
-    background: linear-gradient(180deg, rgba(8, 14, 24, 0.98) 0%, rgba(5, 8, 22, 0.96) 100%);
-    border: 1px solid rgba(86, 247, 177, 0.18);
+    background: var(--card-surface);
+    border: 1px solid rgba(var(--accent-rgb), 0.18);
     border-radius: 14px;
     padding: 50px 60px;
-    box-shadow: 10px 10px 0 rgba(3, 8, 15, 0.95), 0 0 40px rgba(86, 247, 177, 0.08);
+    box-shadow: 10px 10px 0 rgba(var(--theme-shadow-hard-rgb), 0.95), 0 0 40px rgba(var(--accent-rgb), 0.08);
     backdrop-filter: blur(20px);
     position: relative;
 }
@@ -42,7 +42,7 @@
     font-weight: 800;
     color: var(--accent);
     letter-spacing: 0.22em;
-    text-shadow: 0 0 26px rgba(86, 247, 177, 0.18);
+    text-shadow: 0 0 26px rgba(var(--accent-rgb), 0.18);
     margin-bottom: 12px;
 }
 
@@ -70,20 +70,20 @@
 .connection-form-new input {
     width: 100%;
     padding: 14px 16px;
-    background: rgba(8, 14, 24, 0.96);
-    border: 1px solid var(--line);
+    background: var(--control-surface);
+    border: 1px solid var(--control-border);
     border-radius: 8px;
     font-size: 15px;
     color: var(--text-main);
     outline: none;
     transition: all 0.2s;
-    backdrop-filter: blur(10px);
+    box-shadow: var(--control-shadow-inset);
 }
 
 .connection-form-new input:focus {
-    border-color: var(--line-strong);
-    background: rgba(10, 18, 31, 0.98);
-    box-shadow: 0 0 0 1px rgba(86, 247, 177, 0.18), 0 0 20px rgba(86, 247, 177, 0.08);
+    border-color: var(--control-border-strong);
+    background: var(--control-surface-strong);
+    box-shadow: var(--control-shadow-focus);
 }
 
 .connection-form-new input::placeholder {
@@ -93,14 +93,14 @@
 .connection-form-new button {
     width: 100%;
     padding: 15px 22px;
-    background: linear-gradient(180deg, rgba(13, 37, 34, 1) 0%, rgba(7, 20, 25, 1) 100%);
-    color: var(--accent);
-    border: 1px solid rgba(86, 247, 177, 0.35);
+    background: var(--theme-button-surface);
+    color: var(--button-text);
+    border: 1px solid var(--theme-button-border);
     border-radius: 8px;
     font-size: 15px;
     font-weight: 700;
     cursor: pointer;
-    box-shadow: 4px 4px 0 rgba(3, 8, 15, 0.9);
+    box-shadow: var(--button-shadow);
     transition: all 0.2s;
     letter-spacing: 0.14em;
     margin-top: 10px;
@@ -109,7 +109,8 @@
 
 .connection-form-new button:hover {
     transform: translate(-1px, -1px);
-    box-shadow: 6px 6px 0 rgba(3, 8, 15, 0.95), 0 0 24px rgba(86, 247, 177, 0.12);
+    box-shadow: var(--button-shadow-hover);
+    color: var(--button-text-hover);
 }
 
 .connection-form-new button:disabled {
@@ -119,7 +120,7 @@
 }
 
 .connection-error {
-    color: #ffc1cf;
+    color: var(--panel-danger-text);
     font-size: 13px;
     text-align: center;
     margin-top: 20px;
