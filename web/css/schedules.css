@@ -101,10 +101,10 @@
 .schedule-prompt {
     margin-top: 12px;
     padding: 12px 14px;
-    background: rgba(8, 14, 24, 0.92);
-    border: 1px solid rgba(53, 214, 255, 0.12);
+    background: var(--panel-code-surface);
+    border: 1px solid var(--panel-code-border);
     border-radius: 8px;
-    color: rgba(216, 255, 231, 0.9);
+    color: var(--panel-code-text);
     font-size: 12px;
     line-height: 1.7;
     white-space: pre-wrap;
@@ -128,9 +128,9 @@
 
 .schedule-runtime-chip {
     padding: 10px 12px;
-    border: 1px solid rgba(53, 214, 255, 0.12);
+    border: 1px solid var(--panel-inline-border);
     border-radius: 8px;
-    background: rgba(10, 18, 32, 0.72);
+    background: var(--panel-inline-surface);
 }
 
 .schedule-runtime-chip span {
@@ -144,7 +144,7 @@
 
 .schedule-runtime-chip code {
     display: block;
-    color: rgba(216, 255, 231, 0.92);
+    color: color-mix(in srgb, var(--text-main) 92%, transparent);
     font-size: 12px;
     line-height: 1.5;
     white-space: pre-wrap;
@@ -154,10 +154,10 @@
 .schedule-error {
     margin-top: 12px;
     padding: 10px 12px;
-    border: 1px solid rgba(255, 107, 138, 0.28);
-    background: rgba(255, 107, 138, 0.08);
+    border: 1px solid var(--panel-danger-border);
+    background: var(--panel-danger-surface);
     border-radius: 8px;
-    color: #ffc1cf;
+    color: var(--panel-danger-text);
     font-size: 12px;
     line-height: 1.5;
 }
@@ -182,20 +182,20 @@
 .schedule-run-item {
     padding: 12px 14px;
     border-radius: 10px;
-    border: 1px solid rgba(53, 214, 255, 0.12);
-    background: rgba(10, 18, 32, 0.72);
+    border: 1px solid var(--panel-inline-border);
+    background: var(--panel-inline-surface);
 }
 
 .schedule-run-success {
-    border-color: rgba(84, 245, 160, 0.18);
+    border-color: var(--panel-success-border);
 }
 
 .schedule-run-skipped {
-    border-color: rgba(255, 208, 90, 0.2);
+    border-color: var(--panel-warn-border);
 }
 
 .schedule-run-failed {
-    border-color: rgba(255, 107, 138, 0.24);
+    border-color: var(--panel-danger-border);
 }
 
 .schedule-run-top {
@@ -222,7 +222,7 @@
 
 .schedule-run-error {
     margin-top: 8px;
-    color: #ffc1cf;
+    color: var(--panel-danger-text);
     font-size: 12px;
     line-height: 1.5;
 }

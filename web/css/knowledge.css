@@ -79,7 +79,7 @@
 .knowledge-tree-children {
     margin-left: 18px;
     padding-left: 14px;
-    border-left: 1px solid rgba(86, 247, 177, 0.16);
+    border-left: 1px solid rgba(var(--accent-rgb), 0.16);
 }
 
 .knowledge-tree-node {
@@ -90,8 +90,8 @@
     width: 100%;
     padding: 10px 12px;
     border-radius: 10px;
-    border: 1px solid rgba(86, 247, 177, 0.12);
-    background: rgba(8, 14, 24, 0.78);
+    border: 1px solid var(--panel-card-border);
+    background: var(--panel-inline-surface);
     color: var(--text-soft);
     cursor: pointer;
     text-align: left;
@@ -104,8 +104,8 @@
 .knowledge-tree-branch {
     width: 10px;
     height: 10px;
-    border-left: 1px solid rgba(86, 247, 177, 0.22);
-    border-bottom: 1px solid rgba(86, 247, 177, 0.22);
+    border-left: 1px solid rgba(var(--accent-rgb), 0.22);
+    border-bottom: 1px solid rgba(var(--accent-rgb), 0.22);
     border-bottom-left-radius: 3px;
     flex: 0 0 auto;
     opacity: 0.9;
@@ -116,9 +116,9 @@
 }
 
 .knowledge-tree-node.active {
-    border-color: rgba(53, 214, 255, 0.38);
+    border-color: rgba(var(--accent-2-rgb), 0.38);
     color: var(--text-main);
-    box-shadow: 0 0 0 1px rgba(53, 214, 255, 0.14);
+    box-shadow: 0 0 0 1px rgba(var(--accent-2-rgb), 0.14);
 }
 
 .knowledge-tree-label {
@@ -131,8 +131,8 @@
     min-width: 24px;
     padding: 2px 8px;
     border-radius: 999px;
-    background: rgba(53, 214, 255, 0.1);
-    color: rgba(53, 214, 255, 0.92);
+    background: var(--panel-info-surface);
+    color: var(--panel-info-text);
     font-size: 11px;
     text-align: center;
 }
@@ -146,17 +146,17 @@
 .knowledge-tag-chip {
     padding: 8px 12px;
     border-radius: 999px;
-    border: 1px solid rgba(86, 247, 177, 0.14);
-    background: rgba(8, 14, 24, 0.78);
+    border: 1px solid var(--panel-card-border);
+    background: var(--panel-chip-surface);
     color: var(--text-soft);
     cursor: pointer;
     font-size: 12px;
 }
 
 .knowledge-tag-chip.active {
-    border-color: rgba(86, 247, 177, 0.34);
+    border-color: var(--panel-card-active-border);
     color: var(--accent);
-    box-shadow: 0 0 0 1px rgba(86, 247, 177, 0.12);
+    box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.12);
 }
 
 .knowledge-filter-empty {
@@ -186,7 +186,7 @@
 }
 
 .knowledge-breadcrumb-sep {
-    color: rgba(53, 214, 255, 0.65);
+    color: rgba(var(--accent-2-rgb), 0.65);
 }
 
 .knowledge-editor-layout {
@@ -219,9 +219,9 @@
 }
 
 .knowledge-preview-shell {
-    border: 1px solid rgba(86, 247, 177, 0.12);
+    border: 1px solid var(--panel-card-border);
     border-radius: var(--radius-panel);
-    background: rgba(8, 14, 24, 0.72);
+    background: var(--panel-inline-surface);
     padding: 16px;
     min-height: 360px;
 }
@@ -264,14 +264,14 @@
 .knowledge-preview-content code {
     padding: 2px 6px;
     border-radius: 6px;
-    background: rgba(53, 214, 255, 0.08);
+    background: var(--panel-info-surface);
 }
 
 .knowledge-preview-content pre {
     padding: 14px;
     overflow-x: auto;
     border-radius: 10px;
-    background: rgba(5, 8, 22, 0.92);
+    background: var(--panel-code-surface);
 }
 
 .knowledge-editor-actions {
@@ -291,12 +291,12 @@
 }
 
 .knowledge-editor-hint.error {
-    color: #ffc1cf;
+    color: var(--panel-danger-text);
 }
 
 .knowledge-item.active {
-    border-color: rgba(53, 214, 255, 0.42);
-    box-shadow: 0 0 0 1px rgba(53, 214, 255, 0.18), 6px 6px 0 rgba(3, 8, 15, 0.95);
+    border-color: rgba(var(--accent-2-rgb), 0.42);
+    box-shadow: 0 0 0 1px rgba(var(--accent-2-rgb), 0.18), var(--panel-block-shadow-md);
 }
 
 .knowledge-section {
@@ -324,12 +324,12 @@
 .knowledge-section-count {
     min-width: 28px;
     padding: 4px 10px;
-    border: 1px solid rgba(86, 247, 177, 0.2);
+    border: 1px solid var(--panel-success-border);
     border-radius: 999px;
     font-size: 11px;
     color: var(--accent);
     text-align: center;
-    background: rgba(8, 14, 24, 0.82);
+    background: var(--panel-success-surface);
 }
 
 .knowledge-section-list {
@@ -339,8 +339,8 @@
 }
 
 .knowledge-item {
-    background: linear-gradient(180deg, rgba(10, 18, 31, 0.96) 0%, rgba(8, 14, 24, 0.92) 100%);
-    border: 1px solid rgba(86, 247, 177, 0.14);
+    background: var(--panel-card-surface);
+    border: 1px solid var(--panel-card-border);
     border-radius: var(--radius-panel);
     padding: 20px 24px;
     backdrop-filter: blur(10px);
@@ -350,8 +350,8 @@
 }
 
 .knowledge-item:hover {
-    border-color: rgba(86, 247, 177, 0.28);
-    box-shadow: 6px 6px 0 rgba(3, 8, 15, 0.95);
+    border-color: var(--panel-card-hover-border);
+    box-shadow: var(--panel-block-shadow-md);
 }
 
 .knowledge-title {
@@ -389,7 +389,7 @@
 
 .search-bar input {
     padding: 11px 16px;
-    background: rgba(8, 14, 24, 0.96);
+    background: var(--control-surface);
     border: 1px solid var(--line);
     border-radius: var(--radius-input);
     font-size: 13px;
@@ -401,14 +401,14 @@
 
 .search-bar input:focus {
     border-color: var(--line-strong);
-    box-shadow: 0 0 0 1px rgba(86, 247, 177, 0.18), 0 0 18px rgba(86, 247, 177, 0.08);
+    box-shadow: var(--control-shadow-focus);
 }
 
 .search-bar button {
     padding: 10px 18px;
-    background: linear-gradient(180deg, rgba(13, 37, 34, 1) 0%, rgba(7, 20, 25, 1) 100%);
-    color: var(--accent);
-    border: 1px solid rgba(86, 247, 177, 0.3);
+    background: var(--theme-button-surface);
+    color: var(--button-text);
+    border: 1px solid var(--theme-button-border);
     border-radius: 8px;
     font-size: 13px;
     font-weight: 700;
@@ -416,14 +416,14 @@
     transition: all 0.2s;
     text-transform: uppercase;
     letter-spacing: 0.12em;
-    box-shadow: 4px 4px 0 rgba(3, 8, 15, 0.88);
+    box-shadow: var(--button-shadow);
 }
 
 /* ===== Knowledge Modal ===== */
 .knowledge-modal-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(5, 8, 22, 0.88);
+    background: var(--theme-mobile-overlay);
     z-index: 1000;
     display: flex;
     justify-content: center;
@@ -437,11 +437,11 @@
     max-height: 80vh;
     display: flex;
     flex-direction: column;
-    background: linear-gradient(180deg, rgba(8, 14, 24, 0.98) 0%, rgba(5, 8, 22, 0.96) 100%);
-    border: 1px solid rgba(86, 247, 177, 0.18);
+    background: var(--panel-card-surface);
+    border: 1px solid rgba(var(--accent-rgb), 0.18);
     border-radius: 12px;
     padding: 28px;
-    box-shadow: 10px 10px 0 rgba(3, 8, 15, 0.95), 0 0 36px rgba(86, 247, 177, 0.08);
+    box-shadow: 10px 10px 0 rgba(var(--theme-shadow-hard-rgb), 0.95), 0 0 36px rgba(var(--accent-rgb), 0.08);
     overflow: hidden;
 }
 
@@ -464,14 +464,14 @@
 
 .knowledge-modal-title::before {
     content: "record:// ";
-    color: rgba(53, 214, 255, 0.72);
+    color: rgba(var(--accent-2-rgb), 0.72);
 }
 
 .knowledge-modal-close {
     padding: 8px 16px;
-    background: rgba(255, 107, 138, 0.12);
-    border: 1px solid rgba(255, 107, 138, 0.25);
-    color: #ffc1cf;
+    background: var(--panel-danger-surface);
+    border: 1px solid var(--panel-danger-border);
+    color: var(--panel-danger-text);
     border-radius: 8px;
     cursor: pointer;
     text-transform: uppercase;
@@ -490,7 +490,7 @@
 }
 
 .knowledge-modal-content {
-    color: rgba(216, 255, 231, 0.88);
+    color: color-mix(in srgb, var(--text-main) 88%, transparent);
     font-size: 14px;
     line-height: 1.8;
     white-space: pre-wrap;

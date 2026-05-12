@@ -4,9 +4,20 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>EvoDuck WebChat</title>
-    <link rel="stylesheet" href="css/style.css?v=20260508c">
+    <link rel="stylesheet" href="css/style.css?v=20260512-theme-fab">
 </head>
 <body>
+    <div class="theme-fab-switcher" id="themeFabSwitcher">
+        <button class="theme-fab" id="themeFabToggleBtn" type="button" aria-label="Toggle theme menu" aria-haspopup="true" aria-expanded="false" aria-controls="themeFabMenu">TH</button>
+        <div class="theme-switcher-menu" id="themeFabMenu" hidden>
+            <div class="theme-switcher-title">Theme Mode</div>
+            <div class="theme-switcher-controls" role="menu" aria-label="Theme mode">
+                <button class="theme-option-btn" type="button" data-theme-mode="dark" role="menuitemradio" aria-checked="false">Dark</button>
+                <button class="theme-option-btn" type="button" data-theme-mode="light" role="menuitemradio" aria-checked="false">Light</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Connection Page (shown before connecting) -->
     <div class="connection-page" id="connectionPage">
         <div class="connection-box">
@@ -427,6 +438,7 @@
     <script src="js/commands.js?v=20260425b"></script>
     <script src="js/duck-frames.js?v=20260509b"></script>
     <script src="js/duck.js?v=20260509b"></script>
-    <script src="js/app.js?v=20260509b"></script>
+    <script src="js/app.js?v=20260512-theme-fab"></script>
 </body>
 </html>
+
