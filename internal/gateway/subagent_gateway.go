@@ -270,6 +270,16 @@ func (g *Gateway) CancelSubagent(agentID, userID, id string) (*subagent.Record, 
 		return nil, err
 	}
 	updated := *record
+	if watchID := strings.TrimSpace(updated.WatchScheduleID); watchID != "" {
+		if g.schedulerService != nil {
+			if _, ok := g.schedulerService.Get(watchID); ok {
+				if err := g.DeleteSchedule(agentID, userID, watchID); err != nil {
+					return nil, err
+				}
+			}
+		}
+		updated.WatchScheduleID = ""
+	}
 	updated.Status = subagent.StatusCancelRequested
 	updated.UpdatedAt = time.Now().Unix()
 	if err := g.subagentManager.Update(updated); err != nil {
