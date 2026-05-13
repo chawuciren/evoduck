@@ -36,7 +36,13 @@ func (t *SubagentStatusTool) Description() string {
 ## What It Returns
 - Returns the full visible task record as JSON.
 - This is the progress-inspection tool in the subagent workflow.
+- Use it when you need progress now; do not keep polling in the same turn after dispatching a background task unless there is a real immediate need.
 - If you only need the final output summary, prefer subagent_result.
+
+## Timing Guidance
+- Background subagents are paired with a periodic checker.
+- After dispatching a task, the normal path is to end the current turn and let the checker wake the session later.
+- Reach for this tool when you intentionally want a manual progress check before that wake-up happens.
 
 ## Parameters
 - id: Subagent task ID.

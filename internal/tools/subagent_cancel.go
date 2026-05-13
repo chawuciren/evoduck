@@ -37,6 +37,7 @@ func (t *SubagentCancelTool) Description() string {
 - Sends a cancellation request for the specified visible task.
 - Returns the updated task record as JSON.
 - If you are unsure whether cancellation is necessary, inspect the task with subagent_status first.
+- Prefer letting the periodic checker wake the session for normal completion flow; use cancellation only when you have decided the task should stop.
 
 ## Parameters
 - id: Subagent task ID.`

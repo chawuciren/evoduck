@@ -24,7 +24,7 @@ func (t *SubagentResultTool) Description() string {
 
 ## When to Use
 - Use when you already know the task ID and want the result summary rather than raw status metadata.
-- Use after subagent_status indicates the task is complete, or when a watcher wakes the parent session.
+- Use after subagent_status indicates the task is complete, or when the periodic checker wakes the parent session.
 - Use when the parent session needs the subagent's summarized outcome.
 
 ## When NOT to Use

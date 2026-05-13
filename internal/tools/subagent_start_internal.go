@@ -25,33 +25,35 @@ func (t *SubagentStartInternalTool) Description() string {
 	return `Start an asynchronous internal subagent task in the current system.
 
 ## When to Use
-- Delegate long-running or multi-step work that should continue without blocking the current session.
+- Delegate long-running or multi-step work that should keep running after the current turn ends.
 - Use when another internal agent should work independently and report back later.
-- Use when the parent session may move on and come back later to inspect progress or fetch the result.
+- Use when the parent session does not need to wait synchronously for the result.
 
 ## When NOT to Use
-- Do not use for quick work you can finish with a direct tool call in the current turn.
-- Do not use when you only need to read a file, search code, or perform a short one-shot action.
+- Do not use for quick work you can finish with direct tools in the current turn.
+- Do not use when you only need to read files, search code, or do a short one-shot action.
 - Do not use this for external processes or shell-driven jobs; use subagent_start_external instead.
 
 ## Behavior
 - Starts a new internal subagent record tied to the current user and parent session.
-- Automatically creates the watcher schedule for follow-up checks.
+- Automatically creates a periodic checker schedule.
+- After you dispatch the task, the current turn can end; you do not need to keep polling in the same turn.
+- The checker will review progress on schedule, send brief status when needed, and use the session tool to wake the parent session with a summary when the subagent is done, failed, blocked, or stale.
 - Returns the created subagent record as JSON.
-- After starting the task, use subagent_status to inspect progress and subagent_result to read the final summary.
 
 ## Parameters
 - target_agent_id: Internal agent ID to run as the subagent. Defaults to the current agent.
 - description: Short task label.
 - prompt: Full task instructions for the internal subagent.
-- checker_prompt: Prompt used by the watcher schedule to check progress and wake the parent session.
-- checker_schedule: Optional cron schedule for watcher checks. Defaults to every 3 minutes.
+- checker_prompt: Prompt used by the periodic checker to inspect progress and decide what to report back.
+- checker_schedule: Optional cron schedule for checker runs. Use 5 minutes as the normal default, then adjust to the expected task duration. Typical choices range from 1 minute, 5 minutes, 10 minutes, 30 minutes, and 1 hour up to day-level intervals when truly needed, though very long gaps are uncommon.
 
 ## Typical Workflow
-1. Start the background internal task here.
-2. Use subagent_status if you need progress or metadata.
-3. Use subagent_result when the task has finished and you want the result summary.
-4. Use subagent_cancel only if the task should stop entirely.`
+1. Start the background internal task.
+2. End the current turn if there is no more immediate work.
+3. Use subagent_status only when you need progress or metadata now.
+4. Use subagent_result when the session is woken or the task has finished and you want the final summary.
+5. Use subagent_cancel only if the task should stop entirely.`
 }
 
 func (t *SubagentStartInternalTool) Parameters() map[string]interface{} {
@@ -62,7 +64,7 @@ func (t *SubagentStartInternalTool) Parameters() map[string]interface{} {
 			"description":      map[string]interface{}{"type": "string", "description": "Short task name."},
 			"prompt":           map[string]interface{}{"type": "string", "description": "Detailed task prompt for the subagent."},
 			"checker_prompt":   map[string]interface{}{"type": "string", "description": "Prompt for the watcher schedule that checks progress and wakes the parent session."},
-			"checker_schedule": map[string]interface{}{"type": "string", "description": "Cron schedule for watcher checks, default every 3 minutes."},
+			"checker_schedule": map[string]interface{}{"type": "string", "description": "Cron schedule for checker runs. Use 5 minutes as the normal default, then shorten or lengthen it based on the expected task duration."},
 		},
 		"required": []string{"description", "prompt", "checker_prompt"},
 	}

@@ -26,8 +26,8 @@ func (t *SubagentStartExternalTool) Description() string {
 
 ## When to Use
 - Delegate long-running work to an external coding agent, shell-driven worker, or provider-backed process.
-- Use when the task should run outside the current in-process tool execution path.
-- Use when the parent session should continue while the external task runs independently.
+- Use when the task should run outside the current in-process execution path.
+- Use when the parent session does not need to wait synchronously for the result.
 
 ## When NOT to Use
 - Do not use for quick work you can complete directly in the current session.
@@ -36,17 +36,18 @@ func (t *SubagentStartExternalTool) Description() string {
 
 ## Behavior
 - Starts an external subagent record tied to the current user and parent session.
-- Automatically creates the watcher schedule for follow-up checks.
+- Automatically creates a periodic checker schedule.
+- After you dispatch the task, the current turn can end; you do not need to keep polling in the same turn.
+- The checker will review progress on schedule, send brief status when needed, and use the session tool to wake the parent session with a summary when the subagent is done, failed, blocked, or stale.
 - Returns the created subagent record as JSON.
-- After starting the task, use subagent_status to inspect progress and subagent_result to read the final summary.
 
 ## Parameters
 - provider: External provider name, such as opencode. Defaults to process.
 - description: Short task label.
 - command: Command used to launch the external process.
 - working_directory: Optional working directory for the process. Defaults to the current agent workspace.
-- checker_prompt: Prompt used by the watcher schedule to check progress and wake the parent session.
-- checker_schedule: Optional cron schedule for watcher checks. Defaults to every 3 minutes.
+- checker_prompt: Prompt used by the periodic checker to inspect progress and decide what to report back.
+- checker_schedule: Optional cron schedule for checker runs. Use 5 minutes as the normal default, then adjust to the expected task duration. Typical choices range from 1 minute, 5 minutes, 10 minutes, 30 minutes, and 1 hour up to day-level intervals when truly needed, though very long gaps are uncommon.
 
 ## Safety / Constraints
 - This starts an external provider or process, not an internal agent inside the current runtime.
@@ -62,7 +63,7 @@ func (t *SubagentStartExternalTool) Parameters() map[string]interface{} {
 			"command":           map[string]interface{}{"type": "string", "description": "Command to start the external process."},
 			"working_directory": map[string]interface{}{"type": "string", "description": "Working directory for the process. Defaults to current agent workspace."},
 			"checker_prompt":    map[string]interface{}{"type": "string", "description": "Prompt for the watcher schedule that checks progress and wakes the parent session."},
-			"checker_schedule":  map[string]interface{}{"type": "string", "description": "Cron schedule for watcher checks, default every 3 minutes."},
+			"checker_schedule":  map[string]interface{}{"type": "string", "description": "Cron schedule for checker runs. Use 5 minutes as the normal default, then shorten or lengthen it based on the expected task duration."},
 		},
 		"required": []string{"description", "command", "checker_prompt"},
 	}

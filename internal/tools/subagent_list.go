@@ -35,7 +35,7 @@ func (t *SubagentListTool) Description() string {
 ## What It Returns
 - Returns the visible subagent records as JSON.
 - This is a listing and discovery tool, not a full result reader.
-- After you pick an ID from the list, use subagent_status or subagent_result for the next step.
+- After you pick an ID from the list, use subagent_status if you need progress now, or subagent_result when a checker has woken the session or the task is finished.
 
 ## Parameters
 - This tool takes no parameters.`
