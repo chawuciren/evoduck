@@ -2,6 +2,7 @@ package tools
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -10,7 +11,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/chawuciren/evoduck/pkg/models"
@@ -157,33 +157,6 @@ func getShellCommand(shellType ShellType, command string) *exec.Cmd {
 	}
 }
 
-// getShellCommandWithContext 根据类型获取带上下文的 shell 命令（支持取消）
-func getShellCommandWithContext(ctx context.Context, shellType ShellType, command string) *exec.Cmd {
-	if shellType == ShellAuto {
-		if runtime.GOOS == "windows" {
-			shellType = ShellCmd
-		} else {
-			shellType = ShellSh
-		}
-	}
-
-	switch shellType {
-	case ShellCmd:
-		return exec.CommandContext(ctx, "cmd", "/c", command)
-	case ShellPowerShell:
-		return exec.CommandContext(ctx, "powershell", "-Command", command)
-	case ShellBash:
-		return exec.CommandContext(ctx, "bash", "-c", command)
-	case ShellSh:
-		return exec.CommandContext(ctx, "sh", "-c", command)
-	default:
-		if runtime.GOOS == "windows" {
-			return exec.CommandContext(ctx, "cmd", "/c", command)
-		}
-		return exec.CommandContext(ctx, "sh", "-c", command)
-	}
-}
-
 // ExecuteWithRole 带角色检查的执行
 func (t *ExecTool) ExecuteWithRole(ctx context.Context, args map[string]interface{}, role models.Role) (string, error) {
 	// 只有 employee 和 admin 可以执行命令
@@ -257,8 +230,8 @@ func (t *ExecTool) ExecuteWithContext(parentCtx context.Context, args map[string
 	ctx, cancel := context.WithTimeout(parentCtx, time.Duration(timeout)*time.Second)
 	defer cancel()
 
-	// 根据平台和参数选择 shell，使用 CommandContext 以支持取消
-	cmd := getShellCommandWithContext(ctx, shellType, command)
+	// 根据平台和参数选择 shell，由 runCommandWithContext 统一处理取消和超时
+	cmd := getShellCommand(shellType, command)
 	cmd.Dir = fullWorkdir
 	cmd.Env = env
 
@@ -267,13 +240,37 @@ func (t *ExecTool) ExecuteWithContext(parentCtx context.Context, args map[string
 
 	// 执行命令
 	startTime := time.Now()
-	output, err := cmd.CombinedOutput()
+	output, err := runCommandWithContext(ctx, cmd)
 	duration := time.Since(startTime)
 
 	// 处理输出
 	result := t.formatResult(output, err, duration, ctx.Err())
 
 	return result, nil
+}
+
+func runCommandWithContext(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+
+	waitCh := make(chan error, 1)
+	go func() {
+		waitCh <- cmd.Wait()
+	}()
+
+	select {
+	case err := <-waitCh:
+		return output.Bytes(), err
+	case <-ctx.Done():
+		_ = killProcessTree(cmd)
+		err := <-waitCh
+		return output.Bytes(), err
+	}
 }
 
 // validateCommand 验证命令安全性
@@ -367,6 +364,7 @@ type ProcessTool struct {
 type ProcessSession struct {
 	ID        string
 	Command   string
+	Cmd       *exec.Cmd
 	Process   *os.Process
 	StartTime time.Time
 	Status    string // running, completed, failed
@@ -529,6 +527,7 @@ func (t *ProcessTool) actionStartWithContext(ctx context.Context, args map[strin
 	session := &ProcessSession{
 		ID:        sessionID,
 		Command:   command,
+		Cmd:       cmd,
 		Process:   cmd.Process,
 		StartTime: time.Now(),
 		Status:    "running",
@@ -558,8 +557,8 @@ func (t *ProcessTool) actionStartWithContext(ctx context.Context, args map[strin
 		// 等待进程结束
 		err := cmd.Wait()
 		t.mu.Lock()
-		if ctx.Err() == context.Canceled {
-			// 进程被取消
+		if ctx.Err() != nil {
+			// 进程被取消或超时
 			session.Status = "cancelled"
 			session.ExitCode = -1
 		} else if err != nil {
@@ -646,10 +645,8 @@ func (t *ProcessTool) actionKill(args map[string]interface{}) (string, error) {
 		return fmt.Sprintf("Process already %s", session.Status), nil
 	}
 
-	// 发送 SIGTERM
-	if err := session.Process.Signal(syscall.SIGTERM); err != nil {
-		// 如果 SIGTERM 失败，尝试 SIGKILL
-		session.Process.Kill()
+	if err := killProcessTree(session.Cmd); err != nil {
+		return "", fmt.Errorf("kill process tree: %w", err)
 	}
 
 	t.mu.Lock()

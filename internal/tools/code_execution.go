@@ -146,7 +146,7 @@ func (t *CodeExecutionTool) executePythonWithContext(parentCtx context.Context, 
 	defer cancel()
 
 	// 准备命令
-	cmd := exec.CommandContext(ctx, "python3", "-S", tempFile)
+	cmd := exec.Command("python3", "-S", tempFile)
 	cmd.Dir = t.tempDir
 
 	// 安全环境变量（禁用网络相关的库）
@@ -161,7 +161,7 @@ func (t *CodeExecutionTool) executePythonWithContext(parentCtx context.Context, 
 
 	// 执行
 	startTime := time.Now()
-	output, err := cmd.CombinedOutput()
+	output, err := runCommandWithContext(ctx, cmd)
 	duration := time.Since(startTime)
 
 	return t.formatResult(output, err, duration, ctx.Err(), "Python"), nil
@@ -183,7 +183,7 @@ func (t *CodeExecutionTool) executeJavaScriptWithContext(parentCtx context.Conte
 	defer cancel()
 
 	// 准备命令
-	cmd := exec.CommandContext(ctx, "node", "--no-warnings", tempFile)
+	cmd := exec.Command("node", "--no-warnings", tempFile)
 	cmd.Dir = t.tempDir
 
 	// 安全环境变量
@@ -195,7 +195,7 @@ func (t *CodeExecutionTool) executeJavaScriptWithContext(parentCtx context.Conte
 
 	// 执行
 	startTime := time.Now()
-	output, err := cmd.CombinedOutput()
+	output, err := runCommandWithContext(ctx, cmd)
 	duration := time.Since(startTime)
 
 	return t.formatResult(output, err, duration, ctx.Err(), "JavaScript"), nil
