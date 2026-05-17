@@ -700,8 +700,10 @@ body::before {
 
 /* Shared content-area scrollbar treatment for page-level subpanels and editors. */
 .command-dropdown::-webkit-scrollbar,
+.tool-call-params-content::-webkit-scrollbar,
 .tool-call-result-content::-webkit-scrollbar,
 .thinking-content::-webkit-scrollbar,
+.message.assistant .message-content pre::-webkit-scrollbar,
 .log-container::-webkit-scrollbar,
 .knowledge-modal-content::-webkit-scrollbar,
 .knowledge-editor-textarea::-webkit-scrollbar,
@@ -718,8 +720,10 @@ body::before {
 }
 
 .command-dropdown::-webkit-scrollbar-track,
+.tool-call-params-content::-webkit-scrollbar-track,
 .tool-call-result-content::-webkit-scrollbar-track,
 .thinking-content::-webkit-scrollbar-track,
+.message.assistant .message-content pre::-webkit-scrollbar-track,
 .log-container::-webkit-scrollbar-track,
 .knowledge-modal-content::-webkit-scrollbar-track,
 .knowledge-editor-textarea::-webkit-scrollbar-track,
@@ -735,8 +739,10 @@ body::before {
 }
 
 .command-dropdown::-webkit-scrollbar-thumb,
+.tool-call-params-content::-webkit-scrollbar-thumb,
 .tool-call-result-content::-webkit-scrollbar-thumb,
 .thinking-content::-webkit-scrollbar-thumb,
+.message.assistant .message-content pre::-webkit-scrollbar-thumb,
 .log-container::-webkit-scrollbar-thumb,
 .knowledge-modal-content::-webkit-scrollbar-thumb,
 .knowledge-editor-textarea::-webkit-scrollbar-thumb,
