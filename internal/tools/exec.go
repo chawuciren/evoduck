@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -31,15 +30,8 @@ func NewExecTool(permissions AgentPermissions, decider *proxy.Decider) *ExecTool
 		permissions:    permissions,
 		defaultTimeout: 30 * time.Second,
 		maxOutputSize:  50000, // 50KB
-		bannedCommands: []string{
-			"rm -rf /",
-			"mkfs",
-			"dd if=/dev/zero",
-			":(){ :|:& };:", // Fork bomb
-			"format c:",
-			"del /f /s /q c:\\",
-		},
-		decider: decider,
+		bannedCommands: defaultBannedCommands(),
+		decider:        decider,
 	}
 }
 
@@ -49,7 +41,20 @@ func (t *ExecTool) Name() string {
 
 func (t *ExecTool) Description() string {
 	shellInfo := getDefaultShell()
-	return fmt.Sprintf(`Execute a shell command in the workspace.
+	return fmt.Sprintf(`Execute a short-lived shell command in the workspace.
+
+**When to use:**
+- Short, one-shot, non-interactive commands
+- Commands that should finish in the current turn
+- Quick checks, small scripts, and immediate output
+
+**Do not use when:**
+- The command may block for a long time
+- The command may need follow-up input later
+- You want to inspect output across multiple turns
+- You need to keep the process running in the background
+
+Use the process tool instead for long-running or interactive commands.
 
 **Features:**
 - Runs commands in a sandboxed environment
@@ -122,6 +127,13 @@ const (
 	ShellSh         ShellType = "sh"
 )
 
+type commandSpec struct {
+	command string
+	workdir string
+	shell   ShellType
+	env     []string
+}
+
 // getDefaultShell 获取默认 shell
 func getDefaultShell() string {
 	if runtime.GOOS == "windows" {
@@ -159,7 +171,6 @@ func getShellCommand(shellType ShellType, command string) *exec.Cmd {
 
 // ExecuteWithRole 带角色检查的执行
 func (t *ExecTool) ExecuteWithRole(ctx context.Context, args map[string]interface{}, role models.Role) (string, error) {
-	// 只有 employee 和 admin 可以执行命令
 	if role != models.RoleEmployee && role != models.RoleAdmin {
 		return "", fmt.Errorf("access denied: exec tool requires employee or admin role")
 	}
@@ -173,26 +184,9 @@ func (t *ExecTool) Execute(args map[string]interface{}) (string, error) {
 
 // ExecuteWithContext 带上下文的执行，支持取消传播
 func (t *ExecTool) ExecuteWithContext(parentCtx context.Context, args map[string]interface{}) (string, error) {
-	command, ok := args["command"].(string)
-	if !ok || command == "" {
-		return "", fmt.Errorf("command is required")
-	}
-
-	// 安全检查
-	if err := t.validateCommand(command); err != nil {
+	spec, err := t.buildCommandSpec(args)
+	if err != nil {
 		return "", err
-	}
-
-	// 解析 shell 参数
-	shellType := ShellAuto
-	if shell, ok := args["shell"].(string); ok && shell != "" {
-		shellType = ShellType(shell)
-	}
-
-	// 解析参数
-	workdir := "."
-	if wd, ok := args["workdir"].(string); ok && wd != "" {
-		workdir = wd
 	}
 
 	timeout := int(t.defaultTimeout.Seconds())
@@ -200,53 +194,19 @@ func (t *ExecTool) ExecuteWithContext(parentCtx context.Context, args map[string
 		timeout = int(to)
 	}
 
-	// 解析环境变量
-	env := os.Environ()
-	if envMap, ok := args["env"].(map[string]interface{}); ok {
-		for k, v := range envMap {
-			if vs, ok := v.(string); ok {
-				env = append(env, fmt.Sprintf("%s=%s", k, vs))
-			}
-		}
-	}
-
-	// 使用 decider 为 exec 命令构建代理环境变量
-	if t.decider != nil {
-		// 提取命令名称（第一个词）
-		commandName := extractCommandName(command)
-		env = t.decider.BuildExecEnv(commandName, env)
-	}
-
-	// 解析工作目录
-	fullWorkdir, err := t.resolvePath(workdir)
-	if err != nil {
-		return "", err
-	}
-	if err := t.permissions.CanAccessPath(fullWorkdir); err != nil {
-		return "", err
-	}
-
-	// 创建带超时的子上下文，继承父上下文的取消信号
 	ctx, cancel := context.WithTimeout(parentCtx, time.Duration(timeout)*time.Second)
 	defer cancel()
 
-	// 根据平台和参数选择 shell，由 runCommandWithContext 统一处理取消和超时
-	cmd := getShellCommand(shellType, command)
-	cmd.Dir = fullWorkdir
-	cmd.Env = env
-
-	// 设置平台特定的进程属性
+	cmd := getShellCommand(spec.shell, spec.command)
+	cmd.Dir = spec.workdir
+	cmd.Env = spec.env
 	setPlatformSysProcAttr(cmd)
 
-	// 执行命令
 	startTime := time.Now()
 	output, err := runCommandWithContext(ctx, cmd)
 	duration := time.Since(startTime)
 
-	// 处理输出
-	result := t.formatResult(output, err, duration, ctx.Err())
-
-	return result, nil
+	return t.formatResult(output, err, duration, ctx.Err()), nil
 }
 
 func runCommandWithContext(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
@@ -273,16 +233,25 @@ func runCommandWithContext(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
 	}
 }
 
+func defaultBannedCommands() []string {
+	return []string{
+		"rm -rf /",
+		"mkfs",
+		"dd if=/dev/zero",
+		":(){ :|:& };:",
+		"format c:",
+		"del /f /s /q c:\\",
+	}
+}
+
 // validateCommand 验证命令安全性
-func (t *ExecTool) validateCommand(command string) error {
-	// 检查禁止的命令
-	for _, banned := range t.bannedCommands {
+func validateCommand(command string, bannedCommands []string) error {
+	for _, banned := range bannedCommands {
 		if strings.Contains(command, banned) {
 			return fmt.Errorf("blocked: dangerous command detected")
 		}
 	}
 
-	// 检查危险的 shell 语法
 	dangerous := []string{
 		"sudo",
 		"su -",
@@ -300,6 +269,73 @@ func (t *ExecTool) validateCommand(command string) error {
 	return nil
 }
 
+func parseShellArg(args map[string]interface{}) ShellType {
+	shellType := ShellAuto
+	if shell, ok := args["shell"].(string); ok && shell != "" {
+		shellType = ShellType(shell)
+	}
+	return shellType
+}
+
+func parseWorkdirArg(args map[string]interface{}, permissions AgentPermissions) string {
+	workdir := "."
+	if permissions.Workspace != "" {
+		workdir = permissions.Workspace
+	}
+	if wd, ok := args["workdir"].(string); ok && wd != "" {
+		workdir = wd
+	}
+	return workdir
+}
+
+func buildCommandEnv(command string, baseEnv []string, envMap map[string]interface{}, decider *proxy.Decider) []string {
+	env := append([]string(nil), baseEnv...)
+	for k, v := range envMap {
+		if vs, ok := v.(string); ok {
+			env = append(env, fmt.Sprintf("%s=%s", k, vs))
+		}
+	}
+	if decider != nil {
+		commandName := extractCommandName(command)
+		env = decider.BuildExecEnv(commandName, env)
+	}
+	return env
+}
+
+func buildCommandSpec(args map[string]interface{}, permissions AgentPermissions, decider *proxy.Decider, bannedCommands []string) (commandSpec, error) {
+	command, ok := args["command"].(string)
+	if !ok || command == "" {
+		return commandSpec{}, fmt.Errorf("command is required")
+	}
+	if err := validateCommand(command, bannedCommands); err != nil {
+		return commandSpec{}, err
+	}
+
+	shellType := parseShellArg(args)
+	workdir := parseWorkdirArg(args, permissions)
+	fullWorkdir, err := permissions.ResolvePath(workdir)
+	if err != nil {
+		return commandSpec{}, err
+	}
+	if err := permissions.CanAccessPath(fullWorkdir); err != nil {
+		return commandSpec{}, err
+	}
+
+	envMap, _ := args["env"].(map[string]interface{})
+	env := buildCommandEnv(command, os.Environ(), envMap, decider)
+
+	return commandSpec{
+		command: command,
+		workdir: fullWorkdir,
+		shell:   shellType,
+		env:     env,
+	}, nil
+}
+
+func (t *ExecTool) buildCommandSpec(args map[string]interface{}) (commandSpec, error) {
+	return buildCommandSpec(args, t.permissions, t.decider, t.bannedCommands)
+}
+
 // resolvePath 解析路径
 func (t *ExecTool) resolvePath(path string) (string, error) {
 	return t.permissions.ResolvePath(path)
@@ -309,7 +345,6 @@ func (t *ExecTool) resolvePath(path string) (string, error) {
 func (t *ExecTool) formatResult(output []byte, execErr error, duration time.Duration, ctxErr error) string {
 	var result strings.Builder
 
-	// 截断过长的输出
 	outputStr := string(output)
 	if len(outputStr) > t.maxOutputSize {
 		outputStr = outputStr[:t.maxOutputSize] + fmt.Sprintf("\n... (truncated, %d bytes total)", len(output))
@@ -352,32 +387,35 @@ func (t *ExecTool) SetWorkspace(workspace string) {
 // ProcessTool - 后台进程管理
 // ============================================================================
 
-// ProcessTool 管理后台进程
 type ProcessTool struct {
-	permissions AgentPermissions
-	sessions    map[string]*ProcessSession
-	mu          sync.RWMutex
-	decider     *proxy.Decider
+	permissions    AgentPermissions
+	sessions       map[string]*ProcessSession
+	mu             sync.RWMutex
+	decider        *proxy.Decider
+	bannedCommands []string
 }
 
-// ProcessSession 进程会话
 type ProcessSession struct {
-	ID        string
-	Command   string
-	Cmd       *exec.Cmd
-	Process   *os.Process
-	StartTime time.Time
-	Status    string // running, completed, failed
-	ExitCode  int
-	Output    *strings.Builder
-	Done      chan struct{}
+	ID         string
+	Command    string
+	Cmd        *exec.Cmd
+	Process    *os.Process
+	Stdin      io.WriteCloser
+	StartTime  time.Time
+	Status     string
+	ExitCode   int
+	Output     bytes.Buffer
+	ReadOffset int
+	Done       chan struct{}
+	mu         sync.Mutex
 }
 
 func NewProcessTool(permissions AgentPermissions, decider *proxy.Decider) *ProcessTool {
 	return &ProcessTool{
-		permissions: permissions,
-		sessions:    make(map[string]*ProcessSession),
-		decider:     decider,
+		permissions:    permissions,
+		sessions:       make(map[string]*ProcessSession),
+		decider:        decider,
+		bannedCommands: defaultBannedCommands(),
 	}
 }
 
@@ -386,21 +424,43 @@ func (t *ProcessTool) Name() string {
 }
 
 func (t *ProcessTool) Description() string {
-	return `Manage background processes.
+	return `Manage a long-running or interactive shell process.
+
+**When to use:**
+- Commands that may block or run longer than one turn
+- Commands whose output you want to inspect later
+- Commands that may ask for follow-up input
+- Background jobs you want to wait on, poll, or terminate
+
+**Typical workflow:**
+- start: launch the command and get a session ID
+- poll/log: inspect incremental or full output
+- input: send text to the running process when it prompts
+- wait/kill: finish waiting or terminate the process
+
+**Do not use when:**
+- A short one-shot command should finish immediately; use exec instead
 
 **Actions:**
 - start: Start a new background process
-- list: List all running processes
-- poll: Get output from a process (waits for new output)
-- log: Get accumulated output
+- list: List all tracked processes
+- poll: Get new output since the last poll
+- log: Get the full accumulated output
+- input: Send text to the process stdin
 - kill: Terminate a process
-- wait: Wait for process to complete (with timeout support)
+- wait: Wait for process completion with timeout support
 
 **Parameters:**
 - action: The action to perform
-- command: Command to start (for 'start')
-- session_id: Process session ID (for poll/log/kill/wait)
-- timeout: Timeout in seconds for 'wait' action (default: 60, max: 300)`
+- command: Command to start (for start)
+- session_id: Process session ID (for poll/log/input/kill/wait)
+- text: Text to send to stdin (for input)
+- append_newline: Append a trailing newline when sending input (default: true)
+- close_stdin: Close stdin after sending input (default: false)
+- workdir: Working directory for start (optional)
+- shell: Shell for start: cmd, powershell, bash, sh, auto (optional)
+- env: Environment variables for start (optional)
+- timeout: Timeout in seconds for wait (default: 60, max: 300)`
 }
 
 func (t *ProcessTool) Parameters() map[string]interface{} {
@@ -409,27 +469,51 @@ func (t *ProcessTool) Parameters() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"action": map[string]interface{}{
 				"type":        "string",
-				"description": "Action: start, list, poll, log, kill, wait",
-				"enum":        []string{"start", "list", "poll", "log", "kill", "wait"},
+				"description": "Action: start, list, poll, log, input, kill, wait",
+				"enum":        []string{"start", "list", "poll", "log", "input", "kill", "wait"},
 			},
 			"command": map[string]interface{}{
 				"type":        "string",
-				"description": "Command to start (for 'start' action)",
+				"description": "Command to start (for start action)",
 			},
 			"session_id": map[string]interface{}{
 				"type":        "string",
 				"description": "Process session ID",
 			},
+			"text": map[string]interface{}{
+				"type":        "string",
+				"description": "Text to send to stdin (for input action)",
+			},
+			"append_newline": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Append a trailing newline when sending input (default: true)",
+			},
+			"close_stdin": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Close stdin after sending input (default: false)",
+			},
+			"workdir": map[string]interface{}{
+				"type":        "string",
+				"description": "Working directory for start (relative to workspace)",
+			},
+			"shell": map[string]interface{}{
+				"type":        "string",
+				"description": "Shell to use for start: cmd, powershell, bash, sh (default: auto-detect)",
+				"enum":        []string{"cmd", "powershell", "bash", "sh", "auto"},
+			},
+			"env": map[string]interface{}{
+				"type":        "object",
+				"description": "Environment variables for start",
+			},
 			"timeout": map[string]interface{}{
 				"type":        "integer",
-				"description": "Timeout in seconds for 'wait' action (default: 60, max: 300)",
+				"description": "Timeout in seconds for wait (default: 60, max: 300)",
 			},
 		},
 		"required": []string{"action"},
 	}
 }
 
-// ExecuteWithRole 带角色检查
 func (t *ProcessTool) ExecuteWithRole(ctx context.Context, args map[string]interface{}, role models.Role) (string, error) {
 	if role != models.RoleEmployee && role != models.RoleAdmin {
 		return "", fmt.Errorf("access denied: process tool requires employee or admin role")
@@ -441,7 +525,6 @@ func (t *ProcessTool) Execute(args map[string]interface{}) (string, error) {
 	return t.ExecuteWithContext(context.Background(), args)
 }
 
-// ExecuteWithContext 带上下文的执行，支持取消传播
 func (t *ProcessTool) ExecuteWithContext(ctx context.Context, args map[string]interface{}) (string, error) {
 	action, ok := args["action"].(string)
 	if !ok || action == "" {
@@ -457,6 +540,8 @@ func (t *ProcessTool) ExecuteWithContext(ctx context.Context, args map[string]in
 		return t.actionPoll(args)
 	case "log":
 		return t.actionLog(args)
+	case "input":
+		return t.actionInput(args)
 	case "kill":
 		return t.actionKill(args)
 	case "wait":
@@ -466,48 +551,23 @@ func (t *ProcessTool) ExecuteWithContext(ctx context.Context, args map[string]in
 	}
 }
 
-// actionStartWithContext 启动后台进程（带上下文，支持取消）
-func (t *ProcessTool) actionStartWithContext(ctx context.Context, args map[string]interface{}) (string, error) {
-	command, ok := args["command"].(string)
-	if !ok || command == "" {
-		return "", fmt.Errorf("command is required for start action")
-	}
+func (t *ProcessTool) buildCommandSpec(args map[string]interface{}) (commandSpec, error) {
+	return buildCommandSpec(args, t.permissions, t.decider, t.bannedCommands)
+}
 
-	// 检查上下文是否已取消
+func (t *ProcessTool) actionStartWithContext(ctx context.Context, args map[string]interface{}) (string, error) {
+	spec, err := t.buildCommandSpec(args)
+	if err != nil {
+		return "", err
+	}
 	if ctx.Err() != nil {
 		return "", ctx.Err()
 	}
 
-	// 生成 session ID
 	sessionID := fmt.Sprintf("proc_%d", time.Now().UnixNano())
-
-	// 解析工作目录
-	workdir := t.permissions.Workspace
-	if workdir == "" {
-		workdir = "."
-	}
-	if err := t.permissions.CanAccessPath(workdir); err != nil {
-		return "", err
-	}
-
-	// 根据平台选择 shell，使用 CommandContext 以支持取消
-	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
-		cmd = exec.CommandContext(ctx, "cmd", "/c", command)
-	} else {
-		cmd = exec.CommandContext(ctx, "sh", "-c", command)
-	}
-	cmd.Dir = workdir
-
-	// 使用 decider 为 process 命令构建代理环境变量
-	env := os.Environ()
-	if t.decider != nil {
-		commandName := extractCommandName(command)
-		env = t.decider.BuildExecEnv(commandName, env)
-	}
-	cmd.Env = env
-
-	// 设置平台特定的进程属性
+	cmd := getShellCommand(spec.shell, spec.command)
+	cmd.Dir = spec.workdir
+	cmd.Env = spec.env
 	setPlatformSysProcAttr(cmd)
 
 	stdout, err := cmd.StdoutPipe()
@@ -518,65 +578,73 @@ func (t *ProcessTool) actionStartWithContext(ctx context.Context, args map[strin
 	if err != nil {
 		return "", fmt.Errorf("create stderr pipe: %w", err)
 	}
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return "", fmt.Errorf("create stdin pipe: %w", err)
+	}
 
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("start process: %w", err)
 	}
 
-	// 创建会话
 	session := &ProcessSession{
 		ID:        sessionID,
-		Command:   command,
+		Command:   spec.command,
 		Cmd:       cmd,
 		Process:   cmd.Process,
+		Stdin:     stdin,
 		StartTime: time.Now(),
 		Status:    "running",
-		Output:    &strings.Builder{},
 		Done:      make(chan struct{}),
 	}
 
-	// 保存会话
 	t.mu.Lock()
 	t.sessions[sessionID] = session
 	t.mu.Unlock()
 
-	// 收集输出的 goroutine
 	go func() {
 		defer close(session.Done)
-
-		// 合并 stdout 和 stderr
-		reader := io.MultiReader(stdout, stderr)
-		scanner := bufio.NewScanner(reader)
-		for scanner.Scan() {
-			line := scanner.Text()
-			t.mu.Lock()
-			session.Output.WriteString(line + "\n")
-			t.mu.Unlock()
+		captureDone := make(chan struct{}, 2)
+		captureOutput := func(reader io.Reader) {
+			defer func() { captureDone <- struct{}{} }()
+			_, _ = io.Copy(session, reader)
 		}
+		go captureOutput(stdout)
+		go captureOutput(stderr)
 
-		// 等待进程结束
 		err := cmd.Wait()
-		t.mu.Lock()
+		<-captureDone
+		<-captureDone
+
+		session.mu.Lock()
+		defer session.mu.Unlock()
+		if session.Stdin != nil {
+			_ = session.Stdin.Close()
+			session.Stdin = nil
+		}
 		if ctx.Err() != nil {
-			// 进程被取消或超时
 			session.Status = "cancelled"
 			session.ExitCode = -1
 		} else if err != nil {
 			if exitErr, ok := err.(*exec.ExitError); ok {
 				session.ExitCode = exitErr.ExitCode()
+			} else {
+				session.ExitCode = -1
+			}
+			if session.Status != "killed" {
 				session.Status = "failed"
 			}
 		} else {
 			session.ExitCode = 0
-			session.Status = "completed"
+			if session.Status != "killed" {
+				session.Status = "completed"
+			}
 		}
-		t.mu.Unlock()
 	}()
 
-	return fmt.Sprintf("Started process: %s\nSession ID: %s\nCommand: %s", sessionID, sessionID, command), nil
+	return fmt.Sprintf("Started process: %s\nSession ID: %s\nCommand: %s", sessionID, sessionID, spec.command), nil
 }
 
-// actionList 列出所有进程
 func (t *ProcessTool) actionList() (string, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -589,12 +657,21 @@ func (t *ProcessTool) actionList() (string, error) {
 	output.WriteString("# Process Sessions\n\n")
 
 	for id, session := range t.sessions {
+		session.mu.Lock()
+		status := session.Status
+		exitCode := session.ExitCode
+		outputLen := session.Output.Len()
+		startTime := session.StartTime
+		command := session.Command
+		session.mu.Unlock()
+
 		output.WriteString(fmt.Sprintf("## %s\n", id))
-		output.WriteString(fmt.Sprintf("- Status: %s\n", session.Status))
-		output.WriteString(fmt.Sprintf("- Command: %s\n", session.Command))
-		output.WriteString(fmt.Sprintf("- Started: %s\n", session.StartTime.Format("15:04:05")))
-		if session.Status != "running" {
-			output.WriteString(fmt.Sprintf("- Exit Code: %d\n", session.ExitCode))
+		output.WriteString(fmt.Sprintf("- Status: %s\n", status))
+		output.WriteString(fmt.Sprintf("- Command: %s\n", command))
+		output.WriteString(fmt.Sprintf("- Started: %s\n", startTime.Format("15:04:05")))
+		output.WriteString(fmt.Sprintf("- Output Length: %d bytes\n", outputLen))
+		if status != "running" {
+			output.WriteString(fmt.Sprintf("- Exit Code: %d\n", exitCode))
 		}
 		output.WriteString("\n")
 	}
@@ -602,68 +679,155 @@ func (t *ProcessTool) actionList() (string, error) {
 	return output.String(), nil
 }
 
-// actionPoll 获取进程输出
+func (s *ProcessSession) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Output.Write(p)
+}
+
+func (s *ProcessSession) snapshotOutput(incremental bool) (status string, exitCode int, totalLen int, chunk string, startOffset int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	status = s.Status
+	exitCode = s.ExitCode
+	totalLen = s.Output.Len()
+	startOffset = 0
+	data := s.Output.Bytes()
+	if incremental {
+		startOffset = s.ReadOffset
+		if startOffset > len(data) {
+			startOffset = len(data)
+		}
+		chunk = string(data[startOffset:])
+		s.ReadOffset = len(data)
+	} else {
+		chunk = string(data)
+	}
+	return
+}
+
+func (t *ProcessTool) getSession(sessionID string) (*ProcessSession, error) {
+	t.mu.RLock()
+	session, exists := t.sessions[sessionID]
+	t.mu.RUnlock()
+	if !exists {
+		return nil, fmt.Errorf("session not found: %s", sessionID)
+	}
+	return session, nil
+}
+
 func (t *ProcessTool) actionPoll(args map[string]interface{}) (string, error) {
 	sessionID, ok := args["session_id"].(string)
 	if !ok || sessionID == "" {
 		return "", fmt.Errorf("session_id is required")
 	}
 
-	t.mu.RLock()
-	session, exists := t.sessions[sessionID]
-	t.mu.RUnlock()
+	session, err := t.getSession(sessionID)
+	if err != nil {
+		return "", err
+	}
+	status, exitCode, totalLen, chunk, startOffset := session.snapshotOutput(true)
+	return fmt.Sprintf("Status: %s\nExit code: %d\nOutput length: %d bytes\nNew output offset: %d\n\n%s",
+		status, exitCode, totalLen, startOffset, chunk), nil
+}
 
-	if !exists {
-		return "", fmt.Errorf("session not found: %s", sessionID)
+func (t *ProcessTool) actionLog(args map[string]interface{}) (string, error) {
+	sessionID, ok := args["session_id"].(string)
+	if !ok || sessionID == "" {
+		return "", fmt.Errorf("session_id is required")
 	}
 
-	return fmt.Sprintf("Status: %s\nOutput length: %d bytes\n\n%s",
-		session.Status, session.Output.Len(), session.Output.String()), nil
+	session, err := t.getSession(sessionID)
+	if err != nil {
+		return "", err
+	}
+	status, exitCode, totalLen, chunk, _ := session.snapshotOutput(false)
+	return fmt.Sprintf("Status: %s\nExit code: %d\nOutput length: %d bytes\n\n%s",
+		status, exitCode, totalLen, chunk), nil
 }
 
-// actionLog 获取进程日志
-func (t *ProcessTool) actionLog(args map[string]interface{}) (string, error) {
-	return t.actionPoll(args)
+func (t *ProcessTool) actionInput(args map[string]interface{}) (string, error) {
+	sessionID, ok := args["session_id"].(string)
+	if !ok || sessionID == "" {
+		return "", fmt.Errorf("session_id is required")
+	}
+	text, ok := args["text"].(string)
+	if !ok {
+		return "", fmt.Errorf("text is required")
+	}
+	appendNewline := true
+	if raw, ok := args["append_newline"].(bool); ok {
+		appendNewline = raw
+	}
+	closeStdin := false
+	if raw, ok := args["close_stdin"].(bool); ok {
+		closeStdin = raw
+	}
+
+	session, err := t.getSession(sessionID)
+	if err != nil {
+		return "", err
+	}
+
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if session.Status != "running" {
+		return "", fmt.Errorf("process is not running: %s", session.Status)
+	}
+	if session.Stdin == nil {
+		return "", fmt.Errorf("stdin is unavailable for session: %s", sessionID)
+	}
+	if appendNewline {
+		text += "\n"
+	}
+	if _, err := io.WriteString(session.Stdin, text); err != nil {
+		return "", fmt.Errorf("write stdin: %w", err)
+	}
+	if closeStdin {
+		if err := session.Stdin.Close(); err != nil {
+			return "", fmt.Errorf("close stdin: %w", err)
+		}
+		session.Stdin = nil
+	}
+	return fmt.Sprintf("Sent %d bytes to process %s", len(text), sessionID), nil
 }
 
-// actionKill 终止进程
 func (t *ProcessTool) actionKill(args map[string]interface{}) (string, error) {
 	sessionID, ok := args["session_id"].(string)
 	if !ok || sessionID == "" {
 		return "", fmt.Errorf("session_id is required")
 	}
 
-	t.mu.RLock()
-	session, exists := t.sessions[sessionID]
-	t.mu.RUnlock()
-
-	if !exists {
-		return "", fmt.Errorf("session not found: %s", sessionID)
+	session, err := t.getSession(sessionID)
+	if err != nil {
+		return "", err
 	}
 
+	session.mu.Lock()
 	if session.Status != "running" {
-		return fmt.Sprintf("Process already %s", session.Status), nil
+		status := session.Status
+		session.mu.Unlock()
+		return fmt.Sprintf("Process already %s", status), nil
 	}
+	session.Status = "killed"
+	if session.Stdin != nil {
+		_ = session.Stdin.Close()
+		session.Stdin = nil
+	}
+	session.mu.Unlock()
 
 	if err := killProcessTree(session.Cmd); err != nil {
 		return "", fmt.Errorf("kill process tree: %w", err)
 	}
-
-	t.mu.Lock()
-	session.Status = "killed"
-	t.mu.Unlock()
-
 	return fmt.Sprintf("Process %s killed", sessionID), nil
 }
 
-// actionWaitWithContext 等待进程完成（带上下文，支持取消）
 func (t *ProcessTool) actionWaitWithContext(ctx context.Context, args map[string]interface{}) (string, error) {
 	sessionID, ok := args["session_id"].(string)
 	if !ok || sessionID == "" {
 		return "", fmt.Errorf("session_id is required")
 	}
 
-	// 解析超时参数，默认 60 秒，最大 300 秒
 	timeout := 60
 	if to, ok := args["timeout"].(float64); ok {
 		timeout = int(to)
@@ -675,19 +839,16 @@ func (t *ProcessTool) actionWaitWithContext(ctx context.Context, args map[string
 		}
 	}
 
-	t.mu.RLock()
-	session, exists := t.sessions[sessionID]
-	t.mu.RUnlock()
-
-	if !exists {
-		return "", fmt.Errorf("session not found: %s", sessionID)
+	session, err := t.getSession(sessionID)
+	if err != nil {
+		return "", err
 	}
 
-	// 等待进程完成，支持取消和超时
 	select {
 	case <-session.Done:
-		return fmt.Sprintf("Process %s completed with exit code %d\n\nOutput:\n%s",
-			sessionID, session.ExitCode, session.Output.String()), nil
+		status, exitCode, _, chunk, _ := session.snapshotOutput(false)
+		return fmt.Sprintf("Process %s completed with status %s and exit code %d\n\nOutput:\n%s",
+			sessionID, status, exitCode, chunk), nil
 	case <-time.After(time.Duration(timeout) * time.Second):
 		return "", fmt.Errorf("wait timed out after %d seconds (process may still be running)", timeout)
 	case <-ctx.Done():
@@ -695,7 +856,6 @@ func (t *ProcessTool) actionWaitWithContext(ctx context.Context, args map[string
 	}
 }
 
-// SetWorkspace 设置工作目录
 func (t *ProcessTool) SetWorkspace(workspace string) {
 	t.permissions.Workspace = workspace
 }
@@ -706,14 +866,11 @@ func extractCommandName(command string) string {
 	if command == "" {
 		return ""
 	}
-	// 处理管道、重定向等复杂情况，只取第一个命令
 	parts := strings.Fields(command)
 	if len(parts) == 0 {
 		return ""
 	}
-	// 返回第一个词（去掉路径前缀）
 	cmdName := parts[0]
-	// 如果包含路径分隔符，只取最后一部分
 	if idx := strings.LastIndex(cmdName, "/"); idx >= 0 {
 		cmdName = cmdName[idx+1:]
 	}

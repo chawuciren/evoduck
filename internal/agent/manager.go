@@ -28,27 +28,27 @@ import (
 const ExperienceCuratorID = "experience-curator"
 
 type Manager struct {
-	mu                sync.RWMutex
-	agents            map[string]*Agent
-	agentOrder        []string // 记录 agent 注册顺序
-	llmReg            *llm.Registry
-	dataDir           string // 全局数据目录
-	sharedSkillsDir   string
-	backendEndpoints  config.BackendCallConfig
-	sessionToolConfig config.SessionToolConfig
-	memoryConfig      config.MemoryConfig
-	mcpConfig         *config.MCPConfig // MCP 配置（保存用于初始化）
-	mcpManager        *mcp.Manager      // MCP 管理器
-	mcpInitialized    bool              // MCP 是否已初始化
-	proxyDecider      *proxy.Decider    // 代理决策器
-	scheduleManager   tools.ScheduleManager
-	sessionGateway    tools.SessionGateway
-	subagentGateway   tools.SubagentGateway
-	pluginManager            *plugin.Manager
-	configReloader           func(context.Context) (string, error)
-	browserManager           *tools.BrowserManager
-	toolResultCondenseLimit  int
-	imageAutoCompressLimit   int
+	mu                      sync.RWMutex
+	agents                  map[string]*Agent
+	agentOrder              []string // 记录 agent 注册顺序
+	llmReg                  *llm.Registry
+	dataDir                 string // 全局数据目录
+	sharedSkillsDir         string
+	backendEndpoints        config.BackendCallConfig
+	sessionToolConfig       config.SessionToolConfig
+	memoryConfig            config.MemoryConfig
+	mcpConfig               *config.MCPConfig // MCP 配置（保存用于初始化）
+	mcpManager              *mcp.Manager      // MCP 管理器
+	mcpInitialized          bool              // MCP 是否已初始化
+	proxyDecider            *proxy.Decider    // 代理决策器
+	scheduleManager         tools.ScheduleManager
+	sessionGateway          tools.SessionGateway
+	subagentGateway         tools.SubagentGateway
+	pluginManager           *plugin.Manager
+	configReloader          func(context.Context) (string, error)
+	browserManager          *tools.BrowserManager
+	toolResultCondenseLimit int
+	imageAutoCompressLimit  int
 }
 
 type reloadProvider struct {
@@ -61,19 +61,19 @@ func (p reloadProvider) ReloadSystem(ctx context.Context, scope string) (string,
 
 func NewManager(llmReg *llm.Registry, dataDir string, sharedSkillsDir string, backendEndpoints config.BackendCallConfig, sessionToolConfig config.SessionToolConfig, memoryConfig config.MemoryConfig, mcpConfig *config.MCPConfig, proxyDecider *proxy.Decider, pluginManager *plugin.Manager) *Manager {
 	mgr := &Manager{
-		agents:                   make(map[string]*Agent),
-		llmReg:                   llmReg,
-		dataDir:                  dataDir,
-		sharedSkillsDir:          sharedSkillsDir,
-		backendEndpoints:         backendEndpoints,
-		sessionToolConfig:        sessionToolConfig,
-		memoryConfig:             memoryConfig,
-		mcpConfig:                mcpConfig,
-		proxyDecider:             proxyDecider,
-		pluginManager:            pluginManager,
-		browserManager:           tools.NewBrowserManager(),
-		toolResultCondenseLimit:  32 * 1024,
-		imageAutoCompressLimit:   32 * 1024,
+		agents:                  make(map[string]*Agent),
+		llmReg:                  llmReg,
+		dataDir:                 dataDir,
+		sharedSkillsDir:         sharedSkillsDir,
+		backendEndpoints:        backendEndpoints,
+		sessionToolConfig:       sessionToolConfig,
+		memoryConfig:            memoryConfig,
+		mcpConfig:               mcpConfig,
+		proxyDecider:            proxyDecider,
+		pluginManager:           pluginManager,
+		browserManager:          tools.NewBrowserManager(),
+		toolResultCondenseLimit: 32 * 1024,
+		imageAutoCompressLimit:  32 * 1024,
 	}
 
 	return mgr
@@ -770,6 +770,7 @@ func (m *Manager) Register(id string, cfg config.AgentConfig) error {
 		registerTool("file_patch", true, func() { toolReg.Register(tools.NewFilePatchTool(permissions)) })
 		registerTool("exec", true, func() { toolReg.Register(tools.NewExecTool(permissions, m.proxyDecider)) })
 		registerTool("process", true, func() { toolReg.Register(tools.NewProcessTool(permissions, m.proxyDecider)) })
+		registerTool("sleep", true, func() { toolReg.Register(tools.NewSleepTool()) })
 		registerTool("code_execution", true, func() { toolReg.Register(tools.NewCodeExecutionTool()) })
 		registerTool("knowledge_write", true, func() { toolReg.Register(tools.NewKnowledgeWriteTool(m.dataDir)) })
 		registerTool("knowledge_edit", true, func() { toolReg.Register(tools.NewKnowledgeEditTool(m.dataDir)) })
