@@ -35,8 +35,11 @@ func TestBuildIncludesCommandExecutionRouting(t *testing.T) {
 	systemContent := messages[0].Content
 	for _, want := range []string{
 		"## Command Execution Routing",
-		"Use exec for short, one-shot, non-interactive commands",
+		"Use exec only for very short, one-shot, non-interactive commands",
 		"Use process for long-running, blocking, background, or interactive commands",
+		"If a command may take noticeable time, might timeout, may ask for follow-up input, or you may need to inspect logs later, prefer process over exec",
+		"If the task itself is longer-running, more expensive, needs broader research, or involves multiple independent time-consuming tasks, prefer a subagent instead of keeping all work in the current agent",
+		"For multiple independent long-running tasks, prefer launching subagents in parallel rather than serializing them in one agent",
 		"Use sleep for explicit delays between tool calls",
 		"### exec",
 		"### process",

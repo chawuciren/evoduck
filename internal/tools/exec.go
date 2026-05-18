@@ -44,17 +44,17 @@ func (t *ExecTool) Description() string {
 	return fmt.Sprintf(`Execute a short-lived shell command in the workspace.
 
 **When to use:**
-- Short, one-shot, non-interactive commands
-- Commands that should finish in the current turn
-- Quick checks, small scripts, and immediate output
+- Very short, one-shot, non-interactive commands
+- Commands that should finish quickly in the current turn
+- Quick checks and immediate output
 
 **Do not use when:**
-- The command may block for a long time
-- The command may need follow-up input later
-- You want to inspect output across multiple turns
+- The command may take noticeable time or might timeout
+- The command may ask for follow-up input later
+- You may need to inspect logs across multiple turns
 - You need to keep the process running in the background
 
-Use the process tool instead for long-running or interactive commands.
+If there is any realistic chance the command may run long, block, or require interaction, use the process tool instead.
 
 **Features:**
 - Runs commands in a sandboxed environment
@@ -341,13 +341,16 @@ func (t *ExecTool) resolvePath(path string) (string, error) {
 	return t.permissions.ResolvePath(path)
 }
 
-// formatResult 格式化输出结果
+// formatResult 格式化输出结果，截断时保留最新内容（从末尾保留）
 func (t *ExecTool) formatResult(output []byte, execErr error, duration time.Duration, ctxErr error) string {
 	var result strings.Builder
 
 	outputStr := string(output)
+	truncated := false
 	if len(outputStr) > t.maxOutputSize {
-		outputStr = outputStr[:t.maxOutputSize] + fmt.Sprintf("\n... (truncated, %d bytes total)", len(output))
+		// 保留最新的内容（从末尾保留），截断旧的（从头部截断）
+		outputStr = "... (truncated, showing latest content)\n" + outputStr[len(outputStr)-t.maxOutputSize:]
+		truncated = true
 	}
 
 	result.WriteString(fmt.Sprintf("Duration: %v\n\n", duration))
@@ -371,6 +374,9 @@ func (t *ExecTool) formatResult(output []byte, execErr error, duration time.Dura
 		result.WriteString("### Output\n```\n")
 		result.WriteString(outputStr)
 		result.WriteString("\n```\n")
+		if truncated {
+			result.WriteString("\n> ⚠️ Output was truncated (older content removed). For full output, use `process` tool with `log` action and pagination.\n")
+		}
 	} else {
 		result.WriteString("_(no output)_\n")
 	}
@@ -424,31 +430,40 @@ func (t *ProcessTool) Name() string {
 }
 
 func (t *ProcessTool) Description() string {
-	return `Manage a long-running or interactive shell process.
+	return `Manage a long-running, blocking, background, or interactive shell process.
 
 **When to use:**
 - Commands that may block or run longer than one turn
-- Commands whose output you want to inspect later
+- Commands whose output you may need to inspect while they are still running or later
 - Commands that may ask for follow-up input
 - Background jobs you want to wait on, poll, or terminate
+- Any command that might exceed exec's short-lived, quick-return expectation
 
 **Typical workflow:**
 - start: launch the command and get a session ID
-- poll/log: inspect incremental or full output
+- poll: get new output since the last poll (incremental)
+- log: view accumulated output with line-based pagination (from newest to oldest)
 - input: send text to the running process when it prompts
 - wait/kill: finish waiting or terminate the process
 
 **Do not use when:**
-- A short one-shot command should finish immediately; use exec instead
+- A very short one-shot command should finish immediately; use exec instead
 
 **Actions:**
 - start: Start a new background process
 - list: List all tracked processes
-- poll: Get new output since the last poll
-- log: Get the full accumulated output
+- poll: Get new output since the last poll (incremental)
+- log: View accumulated output with pagination (default: latest 100 lines)
 - input: Send text to the process stdin
 - kill: Terminate a process
 - wait: Wait for process completion with timeout support
+
+**Log pagination:**
+- lines: Number of lines per page (default: 100, max: 500)
+- offset: Number of lines to skip from the end (default: 0, means latest lines)
+- max_bytes: Maximum bytes per page to prevent oversized output (default: 32768, max: 65536)
+- Pagination is line-based, from newest to oldest (bottom to top in the output buffer)
+- offset=0 returns the latest lines; offset=100 returns lines 101-200 from the end
 
 **Parameters:**
 - action: The action to perform
@@ -460,7 +475,10 @@ func (t *ProcessTool) Description() string {
 - workdir: Working directory for start (optional)
 - shell: Shell for start: cmd, powershell, bash, sh, auto (optional)
 - env: Environment variables for start (optional)
-- timeout: Timeout in seconds for wait (default: 60, max: 300)`
+- timeout: Timeout in seconds for wait (default: 60, max: 300)
+- lines: Number of lines per page for log (default: 100, max: 500)
+- offset: Lines to skip from end for log (default: 0)
+- max_bytes: Maximum bytes per page for log (default: 32768, max: 65536)`
 }
 
 func (t *ProcessTool) Parameters() map[string]interface{} {
@@ -508,6 +526,18 @@ func (t *ProcessTool) Parameters() map[string]interface{} {
 			"timeout": map[string]interface{}{
 				"type":        "integer",
 				"description": "Timeout in seconds for wait (default: 60, max: 300)",
+			},
+			"lines": map[string]interface{}{
+				"type":        "integer",
+				"description": "Number of lines per page for log action (default: 100, max: 500)",
+			},
+			"offset": map[string]interface{}{
+				"type":        "integer",
+				"description": "Number of lines to skip from the end for log action (default: 0, means latest lines)",
+			},
+			"max_bytes": map[string]interface{}{
+				"type":        "integer",
+				"description": "Maximum bytes per page for log action (default: 32768, max: 65536)",
 			},
 		},
 		"required": []string{"action"},
@@ -741,9 +771,162 @@ func (t *ProcessTool) actionLog(args map[string]interface{}) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	status, exitCode, totalLen, chunk, _ := session.snapshotOutput(false)
-	return fmt.Sprintf("Status: %s\nExit code: %d\nOutput length: %d bytes\n\n%s",
-		status, exitCode, totalLen, chunk), nil
+
+	// Parse pagination parameters
+	lines := 100
+	if l, ok := args["lines"].(float64); ok {
+		lines = int(l)
+		if lines > 500 {
+			lines = 500
+		}
+		if lines < 1 {
+			lines = 100
+		}
+	}
+
+	offset := 0
+	if o, ok := args["offset"].(float64); ok {
+		offset = int(o)
+		if offset < 0 {
+			offset = 0
+		}
+	}
+
+	maxBytes := 32768
+	if mb, ok := args["max_bytes"].(float64); ok {
+		maxBytes = int(mb)
+		if maxBytes > 65536 {
+			maxBytes = 65536
+		}
+		if maxBytes < 1024 {
+			maxBytes = 32768
+		}
+	}
+
+	// Get the full output buffer
+	session.mu.Lock()
+	status := session.Status
+	exitCode := session.ExitCode
+	data := session.Output.Bytes()
+	session.mu.Unlock()
+
+	// Count total lines by finding all newline positions from the end
+	lineEnds := findLineEndsFromEnd(data)
+	totalLines := len(lineEnds)
+
+	// Calculate page boundaries
+	// offset=0 means we start from the latest lines (at the end)
+	// We skip 'offset' lines from the end, then take 'lines' lines
+	skipFromEnd := offset
+	linesToTake := lines
+
+	// Determine which lines to include
+	startLineIdx := totalLines - skipFromEnd - linesToTake
+	if startLineIdx < 0 {
+		startLineIdx = 0
+		linesToTake = totalLines - skipFromEnd
+	}
+	endLineIdx := totalLines - skipFromEnd
+	if endLineIdx > totalLines {
+		endLineIdx = totalLines
+	}
+
+	// Extract the content for this page
+	var pageContent []byte
+	if totalLines == 0 {
+		// No newline in buffer, treat entire buffer as one potential "line"
+		pageContent = data
+	} else {
+		// Find byte positions for the line range
+		// startLineIdx is the index of the first line to include (0-indexed)
+		// endLineIdx is exclusive - we include lines up to endLineIdx-1
+		startBytePos := 0
+		if startLineIdx > 0 {
+			// Start after the newline of the line before our first line
+			startBytePos = lineEnds[startLineIdx-1] + 1
+		}
+		endBytePos := len(data)
+		if endLineIdx > 0 && endLineIdx <= len(lineEnds) {
+			// End after the newline of the last line we include (endLineIdx-1)
+			endBytePos = lineEnds[endLineIdx-1] + 1
+		} else if endLineIdx == 0 {
+			endBytePos = 0
+		}
+		pageContent = data[startBytePos:endBytePos]
+
+		// Apply max_bytes ceiling with line alignment
+		if len(pageContent) > maxBytes {
+			// Truncate to max_bytes, but align to line boundary
+			// Since we're going from newest to oldest, truncate from the beginning (older content)
+			truncatePoint := len(pageContent) - maxBytes
+			// Find the next newline after truncate point to align
+			newlinePos := bytes.IndexByte(pageContent[truncatePoint:], '\n')
+			if newlinePos >= 0 {
+				truncatePoint += newlinePos + 1
+				pageContent = pageContent[truncatePoint:]
+				// Recalculate lines taken after truncation
+				linesInPage := countLines(pageContent)
+				linesToTake = linesInPage
+			} else {
+				// No newline found, just truncate
+				pageContent = pageContent[len(pageContent)-maxBytes:]
+			}
+		}
+	}
+
+	pageBytes := len(pageContent)
+	hasOlder := startLineIdx > 0
+	hasNewer := skipFromEnd > 0
+
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf("Status: %s\nExit code: %d\n", status, exitCode))
+	result.WriteString(fmt.Sprintf("Total lines: %d\n", totalLines))
+	result.WriteString(fmt.Sprintf("Offset: %d (skipped from end)\n", offset))
+	result.WriteString(fmt.Sprintf("Lines in page: %d\n", linesToTake))
+	result.WriteString(fmt.Sprintf("Page bytes: %d\n", pageBytes))
+	if hasOlder {
+		result.WriteString("Has older: yes (use offset + lines to view)\n")
+	} else {
+		result.WriteString("Has older: no\n")
+	}
+	if hasNewer {
+		result.WriteString("Has newer: yes (use offset - lines to view, min offset=0)\n")
+	} else {
+		result.WriteString("Has newer: no\n")
+	}
+	result.WriteString("\n")
+	result.WriteString(string(pageContent))
+
+	return result.String(), nil
+}
+
+// findLineEndsFromEnd finds all newline positions in the data, indexed from the end
+// Returns positions of newlines, where lineEnds[0] is the first newline from the start
+// and lineEnds[len-1] is the last newline (closest to end)
+func findLineEndsFromEnd(data []byte) []int {
+	if len(data) == 0 {
+		return nil
+	}
+	var ends []int
+	for i, b := range data {
+		if b == '\n' {
+			ends = append(ends, i)
+		}
+	}
+	return ends
+}
+
+// countLines counts the number of lines in the given data
+func countLines(data []byte) int {
+	if len(data) == 0 {
+		return 0
+	}
+	count := bytes.Count(data, []byte("\n"))
+	// If the data doesn't end with a newline, add one more line
+	if data[len(data)-1] != '\n' {
+		count++
+	}
+	return count
 }
 
 func (t *ProcessTool) actionInput(args map[string]interface{}) (string, error) {

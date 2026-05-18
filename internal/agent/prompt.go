@@ -294,11 +294,13 @@ NEVER recreate the plan from scratch; NEVER reset completed progress
 - For exec tool, check system for default shell
 
 ## Command Execution Routing
-- Use exec for short, one-shot, non-interactive commands that should finish in the current turn
-- Use process for long-running, blocking, background, or interactive commands
+- Use exec only for very short, one-shot, non-interactive commands that should finish quickly in the current turn
+- Use process for long-running, blocking, background, or interactive commands within the current agent
+- If a command may take noticeable time, might timeout, may ask for follow-up input, or you may need to inspect logs later, prefer process over exec
+- If the task itself is longer-running, more expensive, needs broader research, or involves multiple independent time-consuming tasks, prefer a subagent instead of keeping all work in the current agent
+- For multiple independent long-running tasks, prefer launching subagents in parallel rather than serializing them in one agent
 - For process workflows, prefer: start → poll/log → input when needed → wait or kill
 - Use sleep for explicit delays between tool calls instead of shell-level sleep commands
-- If a command may ask for follow-up input or you may need to inspect output later, prefer process over exec
 
 	## Tool Routing: Memory vs Knowledge vs Skill
 	- Use memory for user-specific remembered facts that should persist across sessions: user preferences, user constraints, user-specific decisions, and recent user context
