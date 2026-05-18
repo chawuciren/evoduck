@@ -120,12 +120,33 @@ func (t *HTTPCallTool) ExecuteWithContext(ctx context.Context, args map[string]i
 	}
 	defer resp.Body.Close()
 
-	var result map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("decode response: %w", err)
+	// 先读取响应体
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read response: %w", err)
 	}
 
-	result["status_code"] = resp.StatusCode
+	// 构建结果
+	result := map[string]interface{}{
+		"status_code": resp.StatusCode,
+	}
+
+	// 尝试解析JSON，如果失败则返回原始文本
+	if len(bodyBytes) > 0 {
+		var jsonResult map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &jsonResult); err == nil {
+			// 成功解析JSON，合并到结果
+			for k, v := range jsonResult {
+				result[k] = v
+			}
+		} else {
+			// 不是JSON，返回原始文本
+			result["body"] = string(bodyBytes)
+		}
+	} else {
+		result["body"] = ""
+	}
+
 	data, _ := json.Marshal(result)
 	return string(data), nil
 }
