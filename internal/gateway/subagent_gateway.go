@@ -124,7 +124,12 @@ func (g *Gateway) CreateInternalSubagent(req subagent.StartInternalRequest) (*su
 	if err := g.subagentManager.Update(created); err != nil {
 		return nil, err
 	}
-	go g.runInternalSubagent(created)
+	ctx, cancel := context.WithCancel(context.Background())
+	g.subagentCancelsMu.Lock()
+	g.subagentCancels[created.ID] = cancel
+	g.subagentCancelsMu.Unlock()
+	go g.runInternalSubagent(ctx, created)
+	go g.heartbeatInternalSubagent(ctx, created.ID)
 	return &created, nil
 }
 
@@ -282,6 +287,15 @@ func (g *Gateway) CancelSubagent(agentID, userID, id string) (*subagent.Record, 
 	}
 	updated.Status = subagent.StatusCancelRequested
 	updated.UpdatedAt = time.Now().Unix()
+
+	g.subagentCancelsMu.Lock()
+	if cancel, ok := g.subagentCancels[id]; ok {
+		cancel()
+		delete(g.subagentCancels, id)
+		updated.Status = subagent.StatusCancelled
+	}
+	g.subagentCancelsMu.Unlock()
+
 	if err := g.subagentManager.Update(updated); err != nil {
 		return nil, err
 	}
@@ -339,8 +353,12 @@ func (g *Gateway) canStartExternalSubagent(callerAgentID, provider string) error
 	return fmt.Errorf("external subagent %s is not authorized for agent %s", provider, callerAgentID)
 }
 
-func (g *Gateway) runInternalSubagent(record subagent.Record) {
-	ctx := context.Background()
+func (g *Gateway) runInternalSubagent(ctx context.Context, record subagent.Record) {
+	defer func() {
+		g.subagentCancelsMu.Lock()
+		delete(g.subagentCancels, record.ID)
+		g.subagentCancelsMu.Unlock()
+	}()
 	stream, err := g.backgroundRuntime.StartInternalRun(ctx, BackgroundAgentRunRequest{
 		RunID:               record.ID,
 		Kind:                "internal_subagent",
@@ -375,6 +393,80 @@ func (g *Gateway) runInternalSubagent(record subagent.Record) {
 	g.finishInternalSubagent(record.ID, subagent.StatusCompleted, result, nil)
 }
 
+func (g *Gateway) heartbeatInternalSubagent(ctx context.Context, id string) {
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			g.subagentManager.UpdateHeartbeat(id, time.Now().Unix())
+		}
+	}
+}
+
+const staleThresholdSeconds = 30 * 60
+
+func (g *Gateway) startStaleReaper() {
+	go func() {
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-g.cleanupStopCh:
+				return
+			case <-ticker.C:
+				g.reapStaleSubagents()
+			}
+		}
+	}()
+}
+
+func (g *Gateway) reapStaleSubagents() {
+	if g.subagentManager == nil {
+		return
+	}
+	now := time.Now().Unix()
+	for _, record := range g.subagentManager.List("", "") {
+		if record.Status != subagent.StatusRunning {
+			continue
+		}
+		if now-record.LastHeartbeatAt < staleThresholdSeconds {
+			continue
+		}
+		g.subagentCancelsMu.Lock()
+		if cancel, ok := g.subagentCancels[record.ID]; ok {
+			cancel()
+			delete(g.subagentCancels, record.ID)
+		}
+		g.subagentCancelsMu.Unlock()
+		record.Status = subagent.StatusStale
+		record.FinishedAt = now
+		record.Error = fmt.Sprintf("subagent timed out after %ds without heartbeat", now-record.LastHeartbeatAt)
+		_ = g.subagentManager.Update(record)
+		g.notifyParentSession(record)
+	}
+}
+
+func (g *Gateway) notifyParentSession(record subagent.Record) {
+	key := strings.TrimSpace(record.ParentSessionKey)
+	if key == "" {
+		return
+	}
+	statusText := string(record.Status)
+	summary := strings.TrimSpace(record.ResultSummary)
+	if summary == "" {
+		summary = strings.TrimSpace(record.Error)
+	}
+	content := fmt.Sprintf("[subagent %s] %s: %s", record.ID, statusText, summary)
+	g.sendWSEventToSession(key, WSResponse{
+		Type:    "subagent",
+		Content: content,
+		Done:    true,
+	})
+}
+
 func (g *Gateway) finishInternalSubagent(id string, status subagent.Status, result string, err error) {
 	record, ok := g.subagentManager.Get(id)
 	if !ok {
@@ -389,6 +481,7 @@ func (g *Gateway) finishInternalSubagent(id string, status subagent.Status, resu
 		logger.Warn("Internal subagent failed", logger.Fields{"subagent_id": id, "error": err.Error()})
 	}
 	_ = g.subagentManager.Update(record)
+	g.notifyParentSession(record)
 }
 
 func (g *Gateway) lastAssistantText(sessionKey string) string {

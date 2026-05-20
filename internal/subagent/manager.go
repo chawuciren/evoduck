@@ -83,6 +83,18 @@ func (m *Manager) Create(record Record) (Record, error) {
 	return record, m.save()
 }
 
+func (m *Manager) UpdateHeartbeat(id string, ts int64) {
+	m.mu.Lock()
+	record, ok := m.records[id]
+	if !ok {
+		m.mu.Unlock()
+		return
+	}
+	record.LastHeartbeatAt = ts
+	m.records[id] = record
+	m.mu.Unlock()
+}
+
 func (m *Manager) Update(record Record) error {
 	if strings.TrimSpace(record.ID) == "" {
 		return fmt.Errorf("subagent id is required")

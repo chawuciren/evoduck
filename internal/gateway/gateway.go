@@ -121,6 +121,8 @@ type Gateway struct {
 	schedulerService  *scheduler.Service
 	backgroundRuntime *BackgroundAgentRuntime
 	subagentManager   *subagent.Manager
+	subagentCancels   map[string]context.CancelFunc
+	subagentCancelsMu sync.Mutex
 	slashHandler      *SlashCommandHandler // 斜杆命令处理器
 	channelsStarted   bool
 	pluginManager     *plugin.Manager
@@ -233,6 +235,7 @@ func New(cfg *config.Config, configPath string, llmReg *llm.Registry, agentMgr *
 	}
 	gw.schedulerService = scheduler.NewService(gw.scheduler, scheduler.NewStore(scheduler.DefaultStorePath(cfg)), scheduler.NewRunStore(scheduler.DefaultRunStoreDir(cfg)), schedulerExecutor{gateway: gw})
 	gw.subagentManager = subagent.NewManager(subagent.NewStore(subagent.DefaultStorePath(cfg.DataDir)))
+	gw.subagentCancels = make(map[string]context.CancelFunc)
 	if err := gw.subagentManager.Load(); err != nil {
 		logger.Warn("Failed to load subagent tasks", logger.Fields{"error": err.Error()})
 	}
@@ -537,6 +540,8 @@ func (g *Gateway) Start() error {
 
 	g.scheduler.Start()
 	logger.Info("Scheduler started")
+
+	g.startStaleReaper()
 
 	// 启动渠道
 	g.startChannels()
