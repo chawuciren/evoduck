@@ -7,6 +7,10 @@ import (
 	"syscall"
 )
 
+func cmdSysProcAttrForCmd(command string) *syscall.SysProcAttr {
+	return nil // never called on non-Windows; gated by runtime.GOOS check
+}
+
 func setPlatformSysProcAttr(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }

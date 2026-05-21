@@ -198,6 +198,12 @@ func newOpenAICompatibleProviderWithAdapter(name string, cfg config.ProviderConf
 		httpClient = decider.ForLLM(name).HTTPClient
 	}
 	streamHTTPClient := cloneHTTPClientWithoutTimeout(httpClient)
+	log.Debug("Created OpenAI-compatible HTTP client", logger.Fields{
+		"provider":              name,
+		"client_timeout_sec":    httpClient.Timeout.Seconds(),
+		"stream_client_timeout": streamHTTPClient.Timeout.Seconds(),
+		"has_decider":           decider != nil,
+	})
 	return &OpenAICompatibleProvider{
 		name:             name,
 		baseURL:          normalized.BaseURL,
@@ -860,6 +866,14 @@ func (p *OpenAICompatibleProvider) doHTTPRequest(req *http.Request, stream, mode
 	client := p.httpClient
 	if stream {
 		client = p.streamHTTPClient
+	}
+	if deadline, ok := req.Context().Deadline(); ok {
+		log.Debug("LLM HTTP request starting", logger.Fields{
+			"url":                   req.URL.String(),
+			"stream":                stream,
+			"client_timeout_sec":    client.Timeout.Seconds(),
+			"context_deadline_sec":  time.Until(deadline).Seconds(),
+		})
 	}
 	resp, err := client.Do(req)
 	if err != nil {

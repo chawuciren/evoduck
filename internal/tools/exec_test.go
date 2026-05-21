@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -181,6 +182,104 @@ func longRunningShellCommand() string {
 		return "ping -n 20 127.0.0.1 > nul"
 	}
 	return "sleep 20"
+}
+
+func TestWrapCmdCommand(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{``, ``},
+		{`simple`, `simple`},
+		{`echo hello`, `echo hello`},
+		{`"C:\Program Files\app.exe" -version`, `""C:\Program Files\app.exe" -version"`},
+		{`"C:\path with spaces\ffmpeg.exe" -i input.mp4`, `""C:\path with spaces\ffmpeg.exe" -i input.mp4"`},
+		{`""`, `""""`},
+	}
+	for _, tt := range tests {
+		got := wrapCmdCommand(tt.input)
+		if got != tt.expected {
+			t.Errorf("wrapCmdCommand(%q) = %q, want %q", tt.input, got, tt.expected)
+		}
+	}
+}
+
+func TestExecWithSpacedPathViaCmdLine(t *testing.T) {
+	if !isWindowsShellDefault() {
+		t.Skip("test only runs on Windows (cmd default)")
+	}
+
+	workspace := t.TempDir()
+	tool := NewExecTool(NewAgentPermissions(models.RoleAdmin, workspace, config.AgentPermissionConfig{}), nil)
+
+	// Create a tiny Go helper .exe in a path with spaces
+	spacedDir := filepath.Join(workspace, "my tools")
+	if err := os.MkdirAll(spacedDir, 0o755); err != nil {
+		t.Fatalf("create spaced dir: %v", err)
+	}
+	helperSrc := filepath.Join(spacedDir, "helper.go")
+	srcContent := `package main
+
+import (
+	"fmt"
+	"os"
+	"strings"
+)
+
+func main() {
+	fmt.Println("HELPER-OK args=[" + strings.Join(os.Args[1:], ",") + "]")
+}
+`
+	if err := os.WriteFile(helperSrc, []byte(srcContent), 0o644); err != nil {
+		t.Fatalf("write helper source: %v", err)
+	}
+	helperExe := filepath.Join(spacedDir, "helper.exe")
+	buildCmd := exec.Command("go", "build", "-o", helperExe, helperSrc)
+	buildCmd.Dir = workspace
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("build test helper: %v\n%s", err, out)
+	}
+
+	// Simulate what the LLM generates: a quoted path with spaces
+	llmCommand := `"` + helperExe + `" --test "my file.txt"`
+	result, err := tool.ExecuteWithContext(context.Background(), map[string]interface{}{
+		"command": llmCommand,
+		"timeout": float64(10),
+	})
+	if err != nil {
+		t.Fatalf("exec returned unexpected error: %v\nResult: %s", err, result)
+	}
+	if !strings.Contains(result, "HELPER-OK") {
+		t.Fatalf("expected HELPER-OK in output, got: %s", result)
+	}
+	if !strings.Contains(result, "--test") {
+		t.Errorf("expected --test arg in output, got: %s", result)
+	}
+	if !strings.Contains(result, "my file.txt") {
+		t.Errorf("expected 'my file.txt' arg in output, got: %s", result)
+	}
+}
+
+func TestExecPipedCommandViaCmdShell(t *testing.T) {
+	if !isWindowsShellDefault() {
+		t.Skip("test only runs on Windows (cmd default)")
+	}
+
+	workspace := t.TempDir()
+	tool := NewExecTool(NewAgentPermissions(models.RoleAdmin, workspace, config.AgentPermissionConfig{}), nil)
+
+	// Commands with shell features (|, >, <, &) MUST still go through cmd /c
+	// via SysProcAttr.CmdLine with proper quote wrapping.
+	result, err := tool.ExecuteWithContext(context.Background(), map[string]interface{}{
+		"command": "echo hello | findstr hello",
+		"timeout": float64(5),
+	})
+	if err != nil {
+		t.Fatalf("exec piped command failed: %v\nResult: %s", err, result)
+	}
+	if !strings.Contains(result, "hello") {
+		t.Fatalf("expected hello in output, got: %s", result)
+	}
 }
 
 func interactiveEchoCommand(t *testing.T, workspace string) string {

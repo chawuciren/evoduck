@@ -142,6 +142,29 @@ func getDefaultShell() string {
 	return "sh"
 }
 
+// wrapCmdCommand prepares a command string for cmd.exe /c on Windows.
+//
+// cmd.exe /c has problematic quote handling: if the command starts with ",
+// cmd strips the first and last " characters. When the LLM generates a command
+// like "C:\Program Files\app.exe" -flag, Go's argv→cmdline conversion adds
+// backslash-escapes that cmd interprets as literal characters in the filename.
+//
+// The fix: when the command starts with ", double-wrap it in extra quotes.
+//   Input:  "C:\path with spaces\app.exe" -flag
+//   Output: ""C:\path with spaces\app.exe" -flag"
+//
+// After cmd strips the outer quotes:
+//   "C:\path with spaces\app.exe" -flag  ← correct!
+//
+// This must be used together with SysProcAttr.CmdLine to bypass Go's own
+// argv escaping, which would otherwise add another layer of backslash-escaping.
+func wrapCmdCommand(command string) string {
+	if len(command) > 0 && command[0] == '"' {
+		return `"` + command + `"`
+	}
+	return command
+}
+
 // getShellCommand 根据类型获取 shell 命令
 func getShellCommand(shellType ShellType, command string) *exec.Cmd {
 	if shellType == ShellAuto {
@@ -154,7 +177,11 @@ func getShellCommand(shellType ShellType, command string) *exec.Cmd {
 
 	switch shellType {
 	case ShellCmd:
-		return exec.Command("cmd", "/c", command)
+		cmd := exec.Command("cmd", "/c", command)
+		if runtime.GOOS == "windows" {
+			cmd.SysProcAttr = cmdSysProcAttrForCmd(command)
+		}
+		return cmd
 	case ShellPowerShell:
 		return exec.Command("powershell", "-Command", command)
 	case ShellBash:
