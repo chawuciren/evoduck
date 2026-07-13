@@ -18,6 +18,11 @@ func (t *SleepTool) Name() string {
 	return "sleep"
 }
 
+// IsTimeoutExempt sleep 的语义本身就是按指定时长等待，豁免 Registry 全局兜底
+func (t *SleepTool) IsTimeoutExempt() bool {
+	return true
+}
+
 func (t *SleepTool) Description() string {
 	return `Pause execution for a short, explicit delay.
 

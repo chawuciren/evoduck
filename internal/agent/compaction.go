@@ -300,8 +300,9 @@ func (c *Compactor) generateSummary(ctx context.Context, sess *session.Session, 
 	// 构建摘要请求
 	prompt := c.buildSummaryPrompt(msgs, flushReport)
 
-	// 调用 LLM
-	response, err := c.llmProvider.Chat(ctx, []models.Message{
+	// 用流式调用生成摘要：流式靠 SSE 首字节保活，可绕过上游 router 对非流式请求的
+	// TTFB/读取超时（曾导致 context deadline exceeded）。
+	response, err := collectChatStream(ctx, c.llmProvider, []models.Message{
 		{
 			Role:    "system",
 			Content: c.getSummarySystemPrompt(),

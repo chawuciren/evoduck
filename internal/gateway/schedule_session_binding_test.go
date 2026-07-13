@@ -66,8 +66,12 @@ func (p *scheduleBindingProvider) Chat(_ context.Context, _ []models.Message, _ 
 	return &models.Response{Content: "ok"}, nil
 }
 func (p *scheduleBindingProvider) ChatStream(_ context.Context, _ []models.Message, _ []models.ToolDefinition) (<-chan models.StreamEvent, error) {
-	ch := make(chan models.StreamEvent)
-	close(ch)
+	ch := make(chan models.StreamEvent, 2)
+	go func() {
+		defer close(ch)
+		ch <- models.StreamEvent{Type: "content", Content: "ok"}
+		ch <- models.StreamEvent{Type: "stop"}
+	}()
 	return ch, nil
 }
 func (p *scheduleBindingProvider) ChatWithOptions(_ context.Context, _ []models.Message, _ []models.ToolDefinition, _ llm.ChatOptions) (*models.Response, error) {
@@ -168,9 +172,21 @@ func (p *curationReportProvider) Chat(_ context.Context, messages []models.Messa
 		return &models.Response{Content: "daily-report: updated MEMORY.md and AGENTS.md for the target namespace"}, nil
 	}
 }
-func (p *curationReportProvider) ChatStream(_ context.Context, _ []models.Message, _ []models.ToolDefinition) (<-chan models.StreamEvent, error) {
-	ch := make(chan models.StreamEvent)
-	close(ch)
+func (p *curationReportProvider) ChatStream(ctx context.Context, messages []models.Message, tools []models.ToolDefinition) (<-chan models.StreamEvent, error) {
+	resp, err := p.Chat(ctx, messages, tools)
+	if err != nil {
+		return nil, err
+	}
+	ch := make(chan models.StreamEvent, 2)
+	go func() {
+		defer close(ch)
+		if len(resp.ToolCalls) > 0 {
+			ch <- models.StreamEvent{Type: "tool_calls", ToolCalls: resp.ToolCalls}
+			return
+		}
+		ch <- models.StreamEvent{Type: "content", Content: resp.Content}
+		ch <- models.StreamEvent{Type: "stop"}
+	}()
 	return ch, nil
 }
 func (p *curationReportProvider) ChatWithOptions(ctx context.Context, messages []models.Message, tools []models.ToolDefinition, _ llm.ChatOptions) (*models.Response, error) {

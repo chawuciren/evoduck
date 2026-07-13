@@ -203,7 +203,15 @@ func (r *Runtime) compactIfNeeded(ctx context.Context, sess *session.Session) er
 	if r.compactor == nil || isEphemeralSession(sess) {
 		return nil
 	}
-	return r.compactor.CompactIfNeeded(ctx, sess)
+	_ = ctx
+	// 隔离 ctx：不继承可能已快到期的聊天 ctx，与 /compress 行为一致。
+	// 上游 router 对非流式请求施加较短 TTFB 超时，且聊天 ctx 跑一会儿后剩余预算不足；
+	// 压缩必须用独立、宽松的 deadline。15m 足以覆盖 pre-compact flush(300s) + summary(600s)
+	// 两个内部子 ctx（见 manager.go runExperienceCuratorPreCompact/CompactionSummary）。
+	// 注意：解耦意味着客户端断开后压缩仍会跑到完成（最长 15m），这与 /compress（gateway.go 也用 Background()）一致。
+	compactCtx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+	return r.compactor.CompactIfNeeded(compactCtx, sess)
 }
 
 func buildTaskPlanFromArgs(args map[string]interface{}) (*models.TaskPlan, error) {
@@ -649,6 +657,26 @@ func (r *Runtime) RunWithMedia(ctx context.Context, sess *session.Session, userM
 		})
 	}
 
+	return nil
+}
+
+// RunStreaming 以流式方式驱动一次 agent 运行（RunStreamWithLoopWithMedia 的同步封装），
+// 排空事件流直到 done/error/cancelled。供原先走非流式 Runtime.Run 的场景（如 curator 临时运行、
+// 压缩相关 LLM 调用）使用：流式靠 SSE 首字节保活，可绕过上游 router 对非流式请求的 TTFB 超时。
+// 运行完成后，最终 assistant 文本已由 RunStreamWithLoopWithMedia 写入 sess，调用方可从 sess 读取。
+func (r *Runtime) RunStreaming(ctx context.Context, sess *session.Session, userMessage string, config models.StreamConfig) error {
+	stream, err := r.RunStreamWithLoopWithMedia(ctx, sess, userMessage, nil, config)
+	if err != nil {
+		return err
+	}
+	for event := range stream {
+		if event.Type == "error" && event.Error != nil {
+			return event.Error
+		}
+		if event.Type == "cancelled" {
+			return ctx.Err()
+		}
+	}
 	return nil
 }
 

@@ -45,9 +45,38 @@ func (p *sessionResetSourceContextProvider) Chat(_ context.Context, messages []m
 		return &models.Response{Content: "done"}, nil
 	}
 }
-func (p *sessionResetSourceContextProvider) ChatStream(_ context.Context, _ []models.Message, _ []models.ToolDefinition) (<-chan models.StreamEvent, error) {
-	ch := make(chan models.StreamEvent)
-	close(ch)
+func (p *sessionResetSourceContextProvider) ChatStream(_ context.Context, messages []models.Message, _ []models.ToolDefinition) (<-chan models.StreamEvent, error) {
+	toolMessages := 0
+	for _, msg := range messages {
+		if msg.Role == "tool" {
+			toolMessages++
+		}
+	}
+	ch := make(chan models.StreamEvent, 2)
+	go func() {
+		defer close(ch)
+		switch toolMessages {
+		case 0:
+			ch <- models.StreamEvent{Type: "tool_calls", ToolCalls: []models.ToolCall{{
+				ID: "call-user-memory-write",
+				Function: models.ToolCallFunction{
+					Name:      "memory_write",
+					Arguments: `{"path":"MEMORY.md","content":"Target user durable fact"}`,
+				},
+			}}}
+		case 1:
+			ch <- models.StreamEvent{Type: "tool_calls", ToolCalls: []models.ToolCall{{
+				ID: "call-agent-bootstrap-write",
+				Function: models.ToolCallFunction{
+					Name:      "memory_write",
+					Arguments: `{"path":"AGENTS.md","content":"Target agent operating rule"}`,
+				},
+			}}}
+		default:
+			ch <- models.StreamEvent{Type: "content", Content: "done"}
+			ch <- models.StreamEvent{Type: "stop"}
+		}
+	}()
 	return ch, nil
 }
 func (p *sessionResetSourceContextProvider) ChatWithOptions(ctx context.Context, messages []models.Message, tools []models.ToolDefinition, _ llm.ChatOptions) (*models.Response, error) {

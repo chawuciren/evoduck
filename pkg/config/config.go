@@ -285,8 +285,9 @@ type PluginCapabilitiesConfig struct {
 }
 
 type ToolsConfig struct {
-	BackendCall BackendCallConfig `yaml:"backend_call"`
-	Session     SessionToolConfig `yaml:"session"`
+	BackendCall    BackendCallConfig `yaml:"backend_call"`
+	Session        SessionToolConfig `yaml:"session"`
+	DefaultTimeout time.Duration     `yaml:"default_timeout"` // 所有工具调用的兜底超时（默认 60s）；0 表示禁用兜底
 }
 
 type SessionToolConfig struct {
@@ -435,13 +436,14 @@ type MCPConfig struct {
 
 // MCPServerConfig MCP 服务器配置
 type MCPServerConfig struct {
-	Type        string            `yaml:"type"`        // "local" 或 "remote"
-	Enabled     bool              `yaml:"enabled"`     // 是否启用
-	Command     []string          `yaml:"command"`     // local: 启动命令
-	Environment map[string]string `yaml:"environment"` // local: 环境变量
-	URL         string            `yaml:"url"`         // remote: 服务器 URL
-	Headers     map[string]string `yaml:"headers"`     // remote: HTTP 头
-	Timeout     int               `yaml:"timeout"`     // 超时时间（毫秒）
+	Type        string            `yaml:"type"`         // "local" 或 "remote"
+	Enabled     bool              `yaml:"enabled"`      // 是否启用
+	Command     []string          `yaml:"command"`      // local: 启动命令
+	Environment map[string]string `yaml:"environment"`  // local: 环境变量
+	URL         string            `yaml:"url"`          // remote: 服务器 URL
+	Headers     map[string]string `yaml:"headers"`      // remote: HTTP 头
+	Timeout     int               `yaml:"timeout"`      // 初始化超时时间（毫秒）
+	CallTimeout int               `yaml:"call_timeout"` // 单次工具调用兜底超时（毫秒）；0 表示使用全局 Tools.DefaultTimeout
 }
 
 func Load(path string) (*Config, error) {
@@ -597,6 +599,10 @@ func setDefaults(cfg *Config, defaultDataDir string) {
 	}
 	if cfg.ToolResultCondenseLimit == 0 {
 		cfg.ToolResultCondenseLimit = 32 * 1024
+	}
+	// 工具调用兜底超时默认 60s；防止外部 MCP/Plugin 工具无超时挂死
+	if cfg.Tools.DefaultTimeout == 0 {
+		cfg.Tools.DefaultTimeout = 60 * time.Second
 	}
 	if cfg.ImageAutoCompressLimit == 0 {
 		cfg.ImageAutoCompressLimit = 32 * 1024

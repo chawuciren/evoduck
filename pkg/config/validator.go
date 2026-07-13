@@ -531,6 +531,30 @@ func (c *Config) validatePlugins() ValidationErrors {
 		}
 	}
 
+	// 校验工具调用兜底超时
+	if c.Tools.DefaultTimeout < 0 {
+		errs = append(errs, ValidationError{
+			Field:   "tools.default_timeout",
+			Message: "default_timeout cannot be negative",
+		})
+	}
+
+	// 校验 MCP 服务器调用超时
+	for name, server := range c.MCP.Servers {
+		if server.CallTimeout < 0 {
+			errs = append(errs, ValidationError{
+				Field:   fmt.Sprintf("mcp.servers.%s.call_timeout", name),
+				Message: "call_timeout cannot be negative",
+			})
+		}
+		if server.Timeout < 0 {
+			errs = append(errs, ValidationError{
+				Field:   fmt.Sprintf("mcp.servers.%s.timeout", name),
+				Message: "timeout cannot be negative",
+			})
+		}
+	}
+
 	return errs
 }
 

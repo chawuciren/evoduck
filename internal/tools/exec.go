@@ -39,6 +39,11 @@ func (t *ExecTool) Name() string {
 	return "exec"
 }
 
+// IsTimeoutExempt 自身已通过 defaultTimeout 管理超时，豁免 Registry 全局兜底
+func (t *ExecTool) IsTimeoutExempt() bool {
+	return true
+}
+
 func (t *ExecTool) Description() string {
 	shellInfo := getDefaultShell()
 	return fmt.Sprintf(`Execute a short-lived shell command in the workspace.
@@ -454,6 +459,11 @@ func NewProcessTool(permissions AgentPermissions, decider *proxy.Decider) *Proce
 
 func (t *ProcessTool) Name() string {
 	return "process"
+}
+
+// IsTimeoutExempt 进程类工具语义上需长跑/分页轮询，豁免 Registry 全局兜底
+func (t *ProcessTool) IsTimeoutExempt() bool {
+	return true
 }
 
 func (t *ProcessTool) Description() string {

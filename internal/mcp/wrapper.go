@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/chawuciren/evoduck/pkg/models"
@@ -13,10 +14,11 @@ import (
 
 // MCPToolWrapper MCP 工具包装器（适配 EvoDuck Registry）
 type MCPToolWrapper struct {
-	client     *Client
-	tool       *mcp.Tool
-	serverName string
-	mu         sync.RWMutex
+	client      *Client
+	tool        *mcp.Tool
+	serverName  string
+	callTimeout time.Duration // 单次工具调用兜底超时；0 表示走 Registry 全局默认
+	mu          sync.RWMutex
 }
 
 // NewMCPToolWrapper 创建 MCP 工具包装器
@@ -26,6 +28,22 @@ func NewMCPToolWrapper(client *Client, tool *mcp.Tool) *MCPToolWrapper {
 		tool:       tool,
 		serverName: client.GetName(),
 	}
+}
+
+// NewMCPToolWrapperWithTimeout 创建带调用超时的 MCP 工具包装器
+func NewMCPToolWrapperWithTimeout(client *Client, tool *mcp.Tool, callTimeout time.Duration) *MCPToolWrapper {
+	return &MCPToolWrapper{
+		client:      client,
+		tool:        tool,
+		serverName:  client.GetName(),
+		callTimeout: callTimeout,
+	}
+}
+
+// CallTimeout 实现 tools.ToolWithTimeout 接口
+// 返回 > 0 时覆盖 Registry 全局默认；返回 0 表示使用全局默认
+func (w *MCPToolWrapper) CallTimeout() time.Duration {
+	return w.callTimeout
 }
 
 // Name 返回工具名称（带服务器前缀）
@@ -152,16 +170,23 @@ func (w *MCPToolWrapper) GetOriginalTool() *mcp.Tool {
 
 // MCPToolRegistry MCP 工具注册表（批量管理）
 type MCPToolRegistry struct {
-	client   *Client
-	wrappers map[string]*MCPToolWrapper // key: prefixed name
-	mu       sync.RWMutex
+	client      *Client
+	callTimeout time.Duration
+	wrappers    map[string]*MCPToolWrapper // key: prefixed name
+	mu          sync.RWMutex
 }
 
 // NewMCPToolRegistry 创建 MCP 工具注册表
 func NewMCPToolRegistry(client *Client) *MCPToolRegistry {
+	return NewMCPToolRegistryWithTimeout(client, 0)
+}
+
+// NewMCPToolRegistryWithTimeout 创建带调用超时的 MCP 工具注册表
+func NewMCPToolRegistryWithTimeout(client *Client, callTimeout time.Duration) *MCPToolRegistry {
 	return &MCPToolRegistry{
-		client:   client,
-		wrappers: make(map[string]*MCPToolWrapper),
+		client:      client,
+		callTimeout: callTimeout,
+		wrappers:    make(map[string]*MCPToolWrapper),
 	}
 }
 
@@ -174,7 +199,7 @@ func (r *MCPToolRegistry) LoadTools(ctx context.Context) error {
 
 	r.mu.Lock()
 	for _, tool := range tools {
-		wrapper := NewMCPToolWrapper(r.client, tool)
+		wrapper := NewMCPToolWrapperWithTimeout(r.client, tool, r.callTimeout)
 		r.wrappers[wrapper.Name()] = wrapper
 	}
 	r.mu.Unlock()

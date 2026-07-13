@@ -569,6 +569,7 @@ func buildGatewayRuntime() (*gateway.Gateway, *plugin.Manager, *config.Config, e
 	agentMgr := agent.NewManager(llmReg, cfg.DataDir, cfg.Shared.SkillsDir, cfg.Tools.BackendCall, cfg.Tools.Session, cfg.Memory, &cfg.MCP, proxyDecider, pluginMgr)
 	agentMgr.SetToolResultCondenseLimit(cfg.ToolResultCondenseLimit)
 	agentMgr.SetImageAutoCompressLimit(cfg.ImageAutoCompressLimit)
+	agentMgr.SetToolDefaultTimeout(cfg.Tools.DefaultTimeout)
 	for id, agentCfg := range cfg.Agents {
 		if err := agentMgr.Register(id, agentCfg); err != nil {
 			return nil, nil, nil, fmt.Errorf("register agent %s: %w", id, err)

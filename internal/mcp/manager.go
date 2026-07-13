@@ -110,7 +110,9 @@ func (m *Manager) connectServer(ctx context.Context, name string, cfg config.MCP
 	}
 
 	// 创建工具注册表并加载工具
-	registry := NewMCPToolRegistry(client)
+	// 单次工具调用兜底超时：0 表示交给 Registry 全局默认
+	callTimeout := time.Duration(cfg.CallTimeout) * time.Millisecond
+	registry := NewMCPToolRegistryWithTimeout(client, callTimeout)
 	if err := registry.LoadTools(ctx); err != nil {
 		mc.Close()
 		return fmt.Errorf("load tools: %w", err)

@@ -49,6 +49,7 @@ type Manager struct {
 	browserManager          *tools.BrowserManager
 	toolResultCondenseLimit int
 	imageAutoCompressLimit  int
+	toolDefaultTimeout      time.Duration // 工具调用兜底超时
 }
 
 type reloadProvider struct {
@@ -57,6 +58,13 @@ type reloadProvider struct {
 
 func (p reloadProvider) ReloadSystem(ctx context.Context, scope string) (string, error) {
 	return p.manager.ReloadSystem(ctx, scope)
+}
+
+// SetToolDefaultTimeout 设置工具调用兜底超时（影响之后注册的 agent）
+func (m *Manager) SetToolDefaultTimeout(d time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.toolDefaultTimeout = d
 }
 
 func NewManager(llmReg *llm.Registry, dataDir string, sharedSkillsDir string, backendEndpoints config.BackendCallConfig, sessionToolConfig config.SessionToolConfig, memoryConfig config.MemoryConfig, mcpConfig *config.MCPConfig, proxyDecider *proxy.Decider, pluginManager *plugin.Manager) *Manager {
@@ -74,6 +82,7 @@ func NewManager(llmReg *llm.Registry, dataDir string, sharedSkillsDir string, ba
 		browserManager:          tools.NewBrowserManager(),
 		toolResultCondenseLimit: 32 * 1024,
 		imageAutoCompressLimit:  32 * 1024,
+		toolDefaultTimeout:      60 * time.Second,
 	}
 
 	return mgr
@@ -232,7 +241,11 @@ func (m *Manager) RunSourceContextCurationEphemeral(ctx context.Context, sourceA
 }
 
 func runEphemeralRuntime(ctx context.Context, ag *Agent, sess *session.Session, input string, startedAt time.Time, label string, metadata map[string]string) (string, error) {
-	if err := ag.Runtime.Run(ctx, sess, input); err != nil {
+	// 用流式驱动 curator 临时运行：流式靠 SSE 首字节保活，可绕过上游 router 对非流式请求的
+	// TTFB/读取超时（曾导致压缩摘要 LLM 调用 30s 处 context deadline exceeded）。
+	// MaxIterations 与原 Runtime.Run 硬编码上限一致；SendToolEvents 无前端消费者故关闭。
+	// 运行结束后最终 assistant 文本已写入 sess，下方仍按原方式从 sess 提取。
+	if err := ag.Runtime.RunStreaming(ctx, sess, input, models.StreamConfig{MaxIterations: 10, SendToolEvents: false}); err != nil {
 		logger.Error(label+" run failed", logger.Fields{
 			"error":       err.Error(),
 			"duration_ms": time.Since(startedAt).Milliseconds(),
@@ -663,6 +676,7 @@ func (m *Manager) Register(id string, cfg config.AgentConfig) error {
 
 	// 创建工具注册表
 	toolReg := tools.NewRegistry()
+	toolReg.SetDefaultTimeout(m.toolDefaultTimeout)
 	role := models.Role(cfg.Role)
 	permissions := tools.NewAgentPermissions(role, cfg.Workspace, cfg.Permissions)
 	hasToolOverride := len(cfg.Permissions.AuthorizedTools) > 0
@@ -866,15 +880,14 @@ func (m *Manager) Register(id string, cfg config.AgentConfig) error {
 	}
 
 	if m.mcpManager != nil {
-		for _, client := range m.mcpManager.GetAllClients() {
-			for _, tool := range client.GetAllTools() {
-				wrapper := mcp.NewMCPToolWrapper(client, tool)
-				toolReg.Register(wrapper)
-				logger.Info("MCP tool registered", logger.Fields{
-					"agent_id": id,
-					"tool":     wrapper.Name(),
-				})
-			}
+		// 使用 MCP manager 已构造的 wrapper（携带每 server 的 call_timeout），
+		// 而非这里重新构造，否则 CallTimeout 会丢失。
+		for _, wrapper := range m.mcpManager.GetAllTools() {
+			toolReg.Register(wrapper)
+			logger.Info("MCP tool registered", logger.Fields{
+				"agent_id": id,
+				"tool":     wrapper.Name(),
+			})
 		}
 	}
 

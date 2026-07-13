@@ -1585,7 +1585,10 @@ func (g *Gateway) CompactSession(agentID string, sess *session.Session) (*comman
 		}, nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	// 隔离 ctx：与自动压缩（Runtime.compactIfNeeded）一致的预算。
+	// 压缩内部要顺序跑 pre-compact curator flush（内部 300s）+ summary（内部 600s），
+	// 60s 会在 summary LLM 调用前就耗尽而报 context deadline exceeded。15m 足以覆盖两者。
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 
 	if err := ag.Runtime.ForceCompact(ctx, sess); err != nil {

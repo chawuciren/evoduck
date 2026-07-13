@@ -21,6 +21,11 @@ func NewSubagentStartExternalTool(agentID string, gateway SubagentGatewayProvide
 
 func (t *SubagentStartExternalTool) Name() string { return "subagent_start_external" }
 
+// IsTimeoutExempt 仅创建异步任务记录后立即返回，不阻塞，豁免 Registry 全局兜底
+func (t *SubagentStartExternalTool) IsTimeoutExempt() bool {
+	return true
+}
+
 func (t *SubagentStartExternalTool) Description() string {
 	return `Start an asynchronous external subagent process through an authorized provider.
 

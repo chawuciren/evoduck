@@ -360,6 +360,11 @@ func NewSessionRunTool(agentID string, gateway SessionGatewayProvider, policy Se
 }
 
 func (t *SessionRunTool) Name() string { return t.name }
+
+// IsTimeoutExempt 会异步触发目标 session 的运行（非同步等待其完成），豁免 Registry 全局兜底
+func (t *SessionRunTool) IsTimeoutExempt() bool {
+	return true
+}
 func (t *SessionRunTool) Description() string {
 	return "Run one input turn inside another visible session using its existing context. Requires an explicit target session key and does not create new session types."
 }

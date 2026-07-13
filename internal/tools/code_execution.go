@@ -31,6 +31,11 @@ func (t *CodeExecutionTool) Name() string {
 	return "code_execution"
 }
 
+// IsTimeoutExempt 自身已通过 timeout 参数管理超时，豁免 Registry 全局兜底
+func (t *CodeExecutionTool) IsTimeoutExempt() bool {
+	return true
+}
+
 func (t *CodeExecutionTool) Description() string {
 	return `Execute Python or JavaScript code in a sandboxed environment.
 

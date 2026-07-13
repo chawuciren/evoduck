@@ -111,8 +111,11 @@ func (s *Session) GetMessages() []models.Message {
 func (s *Session) ReplaceWithSummary(summary string, recent []models.Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// 摘要使用 user 角色。智谱 GLM 等上游要求 messages 中 system 只能有一条且在最前，
+	// 而 PromptBuilder 已在序列最前注入了一个 system；若这里再用 system 会出现「两条前导
+	// system」，触发上游 "messages 参数非法" (code 1214)。改用 user 角色携带摘要可避免该冲突。
 	s.msgs = append([]models.Message{
-		{Role: "system", Content: "Previous conversation summary: " + summary, Timestamp: time.Now()},
+		{Role: "user", Content: "Previous conversation summary: " + summary, Timestamp: time.Now()},
 	}, recent...)
 	s.UpdatedAt = time.Now()
 	if s.store != nil {

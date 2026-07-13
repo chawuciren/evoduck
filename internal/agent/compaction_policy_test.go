@@ -41,8 +41,12 @@ func (p *compactionPolicyProvider) ChatWithOptions(ctx context.Context, messages
 }
 
 func (p *compactionPolicyProvider) ChatStream(_ context.Context, _ []models.Message, _ []models.ToolDefinition) (<-chan models.StreamEvent, error) {
-	ch := make(chan models.StreamEvent)
-	close(ch)
+	ch := make(chan models.StreamEvent, 2)
+	go func() {
+		defer close(ch)
+		ch <- models.StreamEvent{Type: "content", Content: "compressed important context"}
+		ch <- models.StreamEvent{Type: "stop"}
+	}()
 	return ch, nil
 }
 
@@ -67,9 +71,17 @@ func (p *compactionFlushReportProvider) ChatWithOptions(ctx context.Context, mes
 	return p.Chat(ctx, messages, tools)
 }
 
-func (p *compactionFlushReportProvider) ChatStream(_ context.Context, _ []models.Message, _ []models.ToolDefinition) (<-chan models.StreamEvent, error) {
-	ch := make(chan models.StreamEvent)
-	close(ch)
+func (p *compactionFlushReportProvider) ChatStream(ctx context.Context, messages []models.Message, tools []models.ToolDefinition) (<-chan models.StreamEvent, error) {
+	resp, err := p.Chat(ctx, messages, tools)
+	if err != nil {
+		return nil, err
+	}
+	ch := make(chan models.StreamEvent, 2)
+	go func() {
+		defer close(ch)
+		ch <- models.StreamEvent{Type: "content", Content: resp.Content}
+		ch <- models.StreamEvent{Type: "stop"}
+	}()
 	return ch, nil
 }
 
@@ -94,8 +106,12 @@ func (p *compactionNoopProvider) ChatWithOptions(ctx context.Context, messages [
 }
 
 func (p *compactionNoopProvider) ChatStream(_ context.Context, _ []models.Message, _ []models.ToolDefinition) (<-chan models.StreamEvent, error) {
-	ch := make(chan models.StreamEvent)
-	close(ch)
+	ch := make(chan models.StreamEvent, 2)
+	go func() {
+		defer close(ch)
+		ch <- models.StreamEvent{Type: "content", Content: "compressed important context"}
+		ch <- models.StreamEvent{Type: "stop"}
+	}()
 	return ch, nil
 }
 
@@ -131,7 +147,7 @@ func TestCompactionSkipsFlushForIgnoredMemoryPolicyButKeepsSummary(t *testing.T)
 	if len(msgs) != 2 {
 		t.Fatalf("expected summary plus recent message, got %d messages", len(msgs))
 	}
-	if msgs[0].Role != "system" || !strings.HasPrefix(msgs[0].Content, "Previous conversation summary: ") {
+	if msgs[0].Role != "user" || !strings.HasPrefix(msgs[0].Content, "Previous conversation summary: ") {
 		t.Fatalf("expected first message to be summary, got %+v", msgs[0])
 	}
 	if !strings.Contains(msgs[0].Content, "compressed important context") {
