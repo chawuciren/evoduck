@@ -1317,7 +1317,7 @@ func runFirstTimeSetup(autoTriggered bool) error {
 			return err
 		}
 		opts.BaseURL = baseURL
-	case "deepseek", "openrouter", "dashscope", "groq", "mistral", "together", "fireworks", "perplexity", "moonshot", "nvidia", "litellm", "lmstudio", "vllm", "cloudflare-ai-gateway", "vercel-ai-gateway", "helicone", "xai", "azure", "google-ai-studio", "siliconflow", "zhipu", "zhipu-cn", "zhipu-coding", "zhipu-coding-cn", "baidu-qianfan", "tencent-hunyuan", "bytedance", "bytedance-cn", "iflytek-spark", "cerebras", "replicate", "sambanova", "akle", "kilo", "opencode", "cohere", "novita", "dashscope-cn", "dashscope-coding", "dashscope-coding-cn", "portkey":
+	case "deepseek", "openrouter", "dashscope", "groq", "mistral", "together", "fireworks", "perplexity", "moonshot", "nvidia", "litellm", "lmstudio", "vllm", "cloudflare-ai-gateway", "vercel-ai-gateway", "helicone", "xai", "azure", "google-ai-studio", "siliconflow", "zhipu", "zhipu-cn", "zhipu-coding", "zhipu-coding-cn", "baidu-qianfan", "tencent-hunyuan", "bytedance", "bytedance-cn", "iflytek-spark", "cerebras", "replicate", "sambanova", "akle", "kilo", "opencode", "cohere", "novita", "dashscope-cn", "dashscope-coding", "dashscope-coding-cn", "portkey", "xiaomi-mimo":
 		baseURL, err := promptBaseURLWithDefault(reader, fmt.Sprintf("%s Base URL", opts.Provider), opts.BaseURL)
 		if err != nil {
 			return err
