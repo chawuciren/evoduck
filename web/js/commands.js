@@ -15,7 +15,8 @@ var AVAILABLE_COMMANDS = [
     { name: 'compress', desc: '手动触发会话压缩', usage: '/compress', icon: '📦' },
     { name: 'logs', desc: '查看系统日志', usage: '/logs [level] [limit]', icon: '📝', role: 'admin' },
     { name: 'memory', desc: '显示记忆系统状态', usage: '/memory', icon: '🧠', role: 'employee' },
-    { name: 'schedule', desc: '管理用户定时任务', usage: '/schedule [list|enable <id>|disable <id>|delete <id>]', icon: '⏰', role: 'employee' }
+    { name: 'schedule', desc: '管理用户定时任务', usage: '/schedule [list|enable <id>|disable <id>|delete <id>]', icon: '⏰', role: 'employee' },
+    { name: 'mcp', desc: 'Show MCP server status or reconnect', usage: '/mcp [status|reconnect [name]]', icon: '🔌', role: 'employee' }
 ];
 
 var selectedCommandIndex = -1;

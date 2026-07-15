@@ -851,6 +851,22 @@ func (g *Gateway) sendWSCommandResult(conn *websocket.Conn, result *command.Resu
 	}
 	data, _ := json.Marshal(resp)
 	g.writeWSJSON(conn, data, logger.Fields{"response_type": "command"})
+
+	// 异步后续消息：命令（如 /mcp reconnect）可能产生多条独立结果。
+	// 主结果发送后，逐条读取 FollowUps 通道并作为独立 command 消息下发。
+	if result.FollowUps != nil {
+		go func(ch <-chan string) {
+			for msg := range ch {
+				followResp := map[string]interface{}{
+					"type":    "command",
+					"content": msg,
+					"done":    true,
+				}
+				fd, _ := json.Marshal(followResp)
+				g.writeWSJSON(conn, fd, logger.Fields{"response_type": "command_followup"})
+			}
+		}(result.FollowUps)
+	}
 }
 
 func (g *Gateway) sendWSPong(conn *websocket.Conn) {

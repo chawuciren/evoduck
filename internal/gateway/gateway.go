@@ -22,6 +22,7 @@ import (
 	cronpkg "github.com/chawuciren/evoduck/internal/cron"
 	"github.com/chawuciren/evoduck/internal/llm"
 	"github.com/chawuciren/evoduck/internal/mediautil"
+	"github.com/chawuciren/evoduck/internal/mcp"
 	"github.com/chawuciren/evoduck/internal/plugin"
 	"github.com/chawuciren/evoduck/internal/profile"
 	"github.com/chawuciren/evoduck/internal/router"
@@ -1997,6 +1998,77 @@ func parseLogTime(timeStr string) int64 {
 		return 0
 	}
 	return t.Unix()
+}
+
+// ============================================================================
+// MCP 状态 / 重连（命令系统 GatewayAccessor 实现）
+// ============================================================================
+
+// GetMCPStatus 返回所有 MCP server 的连接状态快照（命令层 DTO）。
+func (g *Gateway) GetMCPStatus() command.MCPStatusSnapshot {
+	if g.agentMgr == nil {
+		return command.MCPStatusSnapshot{Servers: []command.MCPServerStatus{}}
+	}
+	snap := g.agentMgr.MCPStatus()
+	out := command.MCPStatusSnapshot{
+		Total:      snap.Total,
+		Online:     snap.Online,
+		Connecting: snap.Connecting,
+		Failed:     snap.Failed,
+		Servers:    make([]command.MCPServerStatus, 0, len(snap.Servers)),
+	}
+	for _, s := range snap.Servers {
+		var ts int64
+		if !s.ConnectedAt.IsZero() {
+			ts = s.ConnectedAt.Unix()
+		}
+		out.Servers = append(out.Servers, command.MCPServerStatus{
+			Name:        s.Name,
+			State:       string(s.State),
+			Online:      s.Online,
+			Error:       s.Error,
+			ConnectedAt: ts,
+			Attempts:    s.Attempts,
+			ToolCount:   s.ToolCount,
+			Server:      s.Server,
+			Version:     s.Version,
+		})
+	}
+	return out
+}
+
+// ReconnectMCP 触发 MCP server 重连。
+//   - target == ""：只重连失败/未连接的（已 connected 的跳过）
+//   - target == "all"：强制重连全部
+//   - 其它：强制重连指定名称
+//
+// 每个 server 完成后回调 onResult（传回 command 层状态快照）。
+// 重连本身在后台异步进行，立即返回被触发的 server 列表。
+func (g *Gateway) ReconnectMCP(ctx context.Context, target string, onResult func(command.MCPServerStatus)) []string {
+	if g.agentMgr == nil {
+		return nil
+	}
+	adapter := func(s mcp.ServerStatus) {
+		if onResult == nil {
+			return
+		}
+		var ts int64
+		if !s.ConnectedAt.IsZero() {
+			ts = s.ConnectedAt.Unix()
+		}
+		onResult(command.MCPServerStatus{
+			Name:        s.Name,
+			State:       string(s.State),
+			Online:      s.Online,
+			Error:       s.Error,
+			ConnectedAt: ts,
+			Attempts:    s.Attempts,
+			ToolCount:   s.ToolCount,
+			Server:      s.Server,
+			Version:     s.Version,
+		})
+	}
+	return g.agentMgr.ReconnectMCP(ctx, target, adapter)
 }
 
 // ============================================================================

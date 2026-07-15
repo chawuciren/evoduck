@@ -513,21 +513,37 @@ function addCommandResult(content) {
     htmlContent = htmlContent.replace(/^- (.+)$/gm, '<li style="margin-left:16px;">$1</li>');
     htmlContent = htmlContent.replace(/^  - (.+)$/gm, '<li style="margin-left:32px;list-style-type:circle;">$1</li>');
 
-    // Tables
-    htmlContent = htmlContent.replace(/^\|(.+)\|$/gm, function(match) {
-        var cells = match.split('|').filter(function(c) { return c.trim(); });
-        var isHeader = cells.some(function(c) { return c.includes('---') || c.includes('------'); });
-        if (isHeader) {
-            return '<tr style="border-bottom:1px solid rgba(59,130,246,0.3);">'
-                + cells.map(function(c) { return '<th style="padding:8px 12px;text-align:left;color:#94A3B8;font-weight:600;">' + c.trim() + '</th>'; }).join('')
-                + '</tr>';
+    // Tables: collect contiguous `| ... |` line groups, identify header/separator,
+    // and emit a single contiguous <table> with <thead>/<tbody> so rows don't get
+    // split apart by later paragraph transforms.
+    htmlContent = htmlContent.replace(/(^|\n)((?:\|[^\n]*\|\s*\n?)+)/g, function(block, prefix, tableText) {
+        var lines = tableText.split('\n').filter(function(l) { return l.trim() !== ''; });
+        if (lines.length === 0) return block;
+        var rows = [];
+        var seenSep = false;
+        for (var i = 0; i < lines.length; i++) {
+            var inner = lines[i].trim().replace(/^\|/, '').replace(/\|$/, '');
+            var cells = inner.split('|');
+            var isSep = cells.every(function(c) { return /^\s*:?-{2,}:?\s*$/.test(c); });
+            if (isSep) { seenSep = true; continue; }
+            var header = rows.length === 0 && !seenSep && i === 0;
+            rows.push({ cells: cells, header: header });
         }
-        return '<tr>' + cells.map(function(c) { return '<td style="padding:8px 12px;">' + c.trim() + '</td>'; }).join('') + '</tr>';
+        if (rows.length === 0) return block;
+        var thead = '', tbody = '';
+        rows.forEach(function(r) {
+            var tag = r.header ? 'th' : 'td';
+            var cellStyle = 'padding:6px 12px;text-align:left;' + (r.header ? 'color:#94A3B8;font-weight:600;' : '');
+            var cellHtml = r.cells.map(function(c) { return '<' + tag + ' style="' + cellStyle + '">' + c.trim() + '</' + tag + '>'; }).join('');
+            var trStyle = r.header ? 'border-bottom:1px solid rgba(59,130,246,0.3);' : 'border-bottom:1px solid rgba(255,255,255,0.06);';
+            var tr = '<tr style="' + trStyle + '">' + cellHtml + '</tr>';
+            if (r.header) thead += tr; else tbody += tr;
+        });
+        var tableHtml = '<table style="width:100%;border-collapse:collapse;margin:8px 0;font-size:13px;">'
+            + (thead ? '<thead>' + thead + '</thead>' : '')
+            + '<tbody>' + tbody + '</tbody></table>';
+        return prefix + tableHtml;
     });
-
-    if (htmlContent.includes('<tr>')) {
-        htmlContent = htmlContent.replace(/(<tr>[\s\S]*?<\/tr>)+/g, '<table style="width:100%;border-collapse:collapse;margin:12px 0;">$&</table>');
-    }
 
     // HR
     htmlContent = htmlContent.replace(/^---$/gm, '<hr style="border:none;border-top:1px solid rgba(59,130,246,0.2);margin:16px 0;">');

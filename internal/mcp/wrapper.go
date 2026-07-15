@@ -207,6 +207,16 @@ func (r *MCPToolRegistry) LoadTools(ctx context.Context) error {
 	return nil
 }
 
+// addExistingWrapper 把已构造好的 wrapper 直接加入注册表（用于 MCPToolRegistry 视图重建）。
+func (r *MCPToolRegistry) addExistingWrapper(w *MCPToolWrapper) {
+	if w == nil {
+		return
+	}
+	r.mu.Lock()
+	r.wrappers[w.Name()] = w
+	r.mu.Unlock()
+}
+
 // GetAllWrappers 获取所有包装器
 func (r *MCPToolRegistry) GetAllWrappers() []*MCPToolWrapper {
 	r.mu.RLock()

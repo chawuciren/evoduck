@@ -401,24 +401,20 @@ func (a *CapabilityAudit) buildMCPSection(g *Gateway) {
 		a.MCP = CapabilityMCP{Initialized: false, Clients: []CapabilityMCPClient{}}
 		return
 	}
-	clients := manager.GetAllClients()
+	snap := manager.Status()
 	a.MCP = CapabilityMCP{
 		Initialized: true,
-		ClientCount: len(clients),
+		ClientCount: snap.Online,
 		ToolCount:   len(manager.GetAllTools()),
-		Clients:     make([]CapabilityMCPClient, 0, len(clients)),
+		Clients:     make([]CapabilityMCPClient, 0, len(snap.Servers)),
 	}
-	for name, client := range clients {
-		if client == nil {
-			continue
-		}
-		serverInfo := client.GetServerInfo()
+	for _, s := range snap.Servers {
 		a.MCP.Clients = append(a.MCP.Clients, CapabilityMCPClient{
-			Name:      name,
-			Connected: client.IsConnected(),
-			ToolCount: len(client.GetAllTools()),
-			Server:    serverInfo.Name,
-			Version:   serverInfo.Version,
+			Name:      s.Name,
+			Connected: s.Online,
+			ToolCount: s.ToolCount,
+			Server:    s.Server,
+			Version:   s.Version,
 		})
 	}
 	sort.Slice(a.MCP.Clients, func(i, j int) bool { return a.MCP.Clients[i].Name < a.MCP.Clients[j].Name })

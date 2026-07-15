@@ -33,6 +33,17 @@ func NewClientFromMCPGo(name string, mc *mcpclient.Client) *Client {
 	}
 }
 
+// NewFakeClient 构造一个仅含 name 和已缓存工具的 Client（无真实 transport）。
+// 仅供测试使用：当需要在不启动真实 MCP server 的情况下模拟一个"已连接"的 client 时。
+func NewFakeClient(name string, initialized bool, toolNames ...string) *Client {
+	c := NewClientFromMCPGo(name, nil)
+	c.initialized = initialized
+	for _, tn := range toolNames {
+		c.tools[tn] = &mcp.Tool{Name: tn}
+	}
+	return c
+}
+
 // Initialize 初始化连接
 func (c *Client) Initialize(ctx context.Context) error {
 	// 先启动 transport
@@ -166,6 +177,9 @@ func (c *Client) GetServerInfo() mcp.Implementation {
 
 // Close 关闭客户端
 func (c *Client) Close() error {
+	if c == nil || c.mcpClient == nil {
+		return nil
+	}
 	return c.mcpClient.Close()
 }
 

@@ -28,6 +28,9 @@ type Context struct {
 	Name    string // 命令名称 (如 "help")
 	Args    string // 命令参数 (如 "status" 或 "")
 
+	// Ctx 异步操作使用的根 context（可取消）。命令实现可将其传给 Gateway 的异步方法。
+	Ctx context.Context
+
 	// Gateway 引用 (用于访问 Agent Manager, LLM Registry 等)
 	Gateway GatewayAccessor // Gateway 访问接口
 }
@@ -65,6 +68,10 @@ type GatewayAccessor interface {
 	SendSessionMessage(ctx context.Context, sessionKey string, content string) (int, error)
 	SendSessionOutgoingMessage(ctx context.Context, sessionKey string, outgoing *models.OutgoingMessage) (int, error)
 	RunSessionInput(ctx context.Context, agentID, sessionKey, input string) error
+
+	// MCP 相关
+	GetMCPStatus() MCPStatusSnapshot
+	ReconnectMCP(ctx context.Context, target string, onResult func(MCPServerStatus)) []string
 
 	// 其他
 	GetStartTime() int64
@@ -213,6 +220,28 @@ type CompactResult struct {
 	FailureMessage  string
 }
 
+// MCPServerStatus 单个 MCP server 的连接状态（命令层 DTO，镜像 mcp.ServerStatus）。
+type MCPServerStatus struct {
+	Name        string `json:"name"`
+	State       string `json:"state"`
+	Online      bool   `json:"online"`
+	Error       string `json:"error"`
+	ConnectedAt int64  `json:"connected_at"`
+	Attempts    int    `json:"attempts"`
+	ToolCount   int    `json:"tool_count"`
+	Server      string `json:"server"`
+	Version     string `json:"version"`
+}
+
+// MCPStatusSnapshot 全部 MCP server 的连接状态快照（命令层 DTO）。
+type MCPStatusSnapshot struct {
+	Total      int               `json:"total"`
+	Online     int               `json:"online"`
+	Connecting int               `json:"connecting"`
+	Failed     int               `json:"failed"`
+	Servers    []MCPServerStatus `json:"servers"`
+}
+
 // SchedulerJobInfo 调度任务信息
 // Result 命令执行结果
 type Result struct {
@@ -220,6 +249,11 @@ type Result struct {
 	ActionType string         // 可选后续动作: "new_session", "switch_agent", "clear_ui"
 	ActionData map[string]any // 动作参数
 	Error      error          // 错误信息 (如果有)
+
+	// FollowUps 可选的异步后续消息通道（每条 string 作为一条独立消息反馈给前端）。
+	// 由命令执行后、主结果返回后异步产生；通道关闭表示后续消息发送完毕。
+	// 命令执行器（gateway）会在发送主结果后，逐条读取该通道并作为独立 command 消息下发。
+	FollowUps <-chan string
 }
 
 // NewResult 创建成功结果

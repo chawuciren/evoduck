@@ -104,6 +104,15 @@ func (r *Registry) Register(t Tool) {
 	r.tools[t.Name()] = t
 }
 
+// Unregister 移除指定名称的工具。
+// 用于 MCP / Plugin 工具在 server 断开/重连前动态下线。
+// 不存在的名称视为 no-op。
+func (r *Registry) Unregister(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.tools, name)
+}
+
 func (r *Registry) Get(name string) (Tool, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

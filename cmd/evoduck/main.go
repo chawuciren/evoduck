@@ -480,7 +480,7 @@ Examples:
 }
 
 func runGateway() error {
-	gw, pluginMgr, cfg, err := buildGatewayRuntime()
+	gw, pluginMgr, agentMgr, cfg, err := buildGatewayRuntime()
 	if err != nil {
 		return err
 	}
@@ -489,6 +489,7 @@ func runGateway() error {
 	d := daemon.New()
 	d.OnShutdown(func(ctx context.Context) error {
 		logger.Info("Shutting down gateway")
+		agentMgr.ShutdownMCP()
 		if err := gw.Stop(); err != nil {
 			return err
 		}
@@ -506,15 +507,15 @@ func runGateway() error {
 	})
 }
 
-func buildGatewayRuntime() (*gateway.Gateway, *plugin.Manager, *config.Config, error) {
+func buildGatewayRuntime() (*gateway.Gateway, *plugin.Manager, *agent.Manager, *config.Config, error) {
 	if err := ensureStartupConfigReady(); err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
 	// 加载配置
 	cfg, err := config.Load(cfgFile)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("load config: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("load config: %w", err)
 	}
 
 	// 设置代理环境变量（程序启动时设置，所有 HTTP client 和子进程自动继承）
@@ -522,7 +523,7 @@ func buildGatewayRuntime() (*gateway.Gateway, *plugin.Manager, *config.Config, e
 
 	// 验证配置
 	if err := cfg.ValidateWithEnv(); err != nil {
-		return nil, nil, nil, fmt.Errorf("config validation: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("config validation: %w", err)
 	}
 
 	// 根据配置重新设置日志（配置文件或环境变量可能覆盖默认值）
@@ -541,7 +542,7 @@ func buildGatewayRuntime() (*gateway.Gateway, *plugin.Manager, *config.Config, e
 	// 初始化 LLM Registry
 	llmReg, err := llm.NewRegistry(cfg.LLM, proxyDecider)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("init LLM registry: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("init LLM registry: %w", err)
 	}
 
 	logger.Info("LLM registry initialized", logger.Fields{
@@ -550,7 +551,7 @@ func buildGatewayRuntime() (*gateway.Gateway, *plugin.Manager, *config.Config, e
 	})
 	pluginMgr := plugin.NewManager(cfg.Plugins, proxyDecider)
 	if err := pluginMgr.Start(context.Background()); err != nil {
-		return nil, nil, nil, fmt.Errorf("start plugin manager: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("start plugin manager: %w", err)
 	}
 	if err := pluginMgr.WaitReady(context.Background(), 30*time.Second); err != nil {
 		logger.Warn("Plugin manager ready wait failed", logger.Fields{
@@ -560,7 +561,7 @@ func buildGatewayRuntime() (*gateway.Gateway, *plugin.Manager, *config.Config, e
 
 	for _, providerAdapter := range pluginMgr.ListProviderAdapters() {
 		if err := llmReg.RegisterDynamic(providerAdapter.Name(), providerAdapter); err != nil {
-			return nil, nil, nil, fmt.Errorf("register plugin provider %s: %w", providerAdapter.Name(), err)
+			return nil, nil, nil, nil, fmt.Errorf("register plugin provider %s: %w", providerAdapter.Name(), err)
 		}
 		logger.Info("Plugin provider registered", logger.Fields{"provider": providerAdapter.Name()})
 	}
@@ -572,7 +573,7 @@ func buildGatewayRuntime() (*gateway.Gateway, *plugin.Manager, *config.Config, e
 	agentMgr.SetToolDefaultTimeout(cfg.Tools.DefaultTimeout)
 	for id, agentCfg := range cfg.Agents {
 		if err := agentMgr.Register(id, agentCfg); err != nil {
-			return nil, nil, nil, fmt.Errorf("register agent %s: %w", id, err)
+			return nil, nil, nil, nil, fmt.Errorf("register agent %s: %w", id, err)
 		}
 		logger.Info("Agent registered", logger.Fields{
 			"agent_id":  id,
@@ -594,7 +595,7 @@ func buildGatewayRuntime() (*gateway.Gateway, *plugin.Manager, *config.Config, e
 	}
 	curatorCfg := agent.ExperienceCuratorConfig(cfg.DataDir, curatorBaseCfg)
 	if err := agentMgr.Register(agent.ExperienceCuratorID, curatorCfg); err != nil {
-		return nil, nil, nil, fmt.Errorf("register system agent %s: %w", agent.ExperienceCuratorID, err)
+		return nil, nil, nil, nil, fmt.Errorf("register system agent %s: %w", agent.ExperienceCuratorID, err)
 	}
 	logger.Info("System agent registered", logger.Fields{
 		"agent_id":  agent.ExperienceCuratorID,
@@ -607,7 +608,11 @@ func buildGatewayRuntime() (*gateway.Gateway, *plugin.Manager, *config.Config, e
 	agentMgr.SetScheduleManager(gw)
 	agentMgr.SetSessionGateway(gw)
 	agentMgr.SetSubagentGateway(gw)
-	return gw, pluginMgr, cfg, nil
+
+	// 所有 agent 注册完成后，异步启动 MCP server 连接（非阻塞，单个失败不影响启动）
+	agentMgr.StartMCP()
+
+	return gw, pluginMgr, agentMgr, cfg, nil
 }
 
 type skillTarget struct {

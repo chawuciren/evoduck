@@ -30,6 +30,7 @@ func RegisterBuiltinCommands(reg *Registry) {
 	reg.MustRegister(NewLogsCommand())
 	reg.MustRegister(NewMemoryCommand())
 	reg.MustRegister(NewScheduleCommand())
+	reg.MustRegister(NewMCPCommand())
 }
 
 // ============================================================================
@@ -725,6 +726,14 @@ func formatUnixStatusTime(ts int64) string {
 	return time.Unix(ts, 0).Format("2006-01-02 15:04:05")
 }
 
+// formatMCPUnixTime 把 Unix 时间戳格式化为人类可读时间（用于 /mcp 命令输出）。
+func formatMCPUnixTime(ts int64) string {
+	if ts <= 0 {
+		return "-"
+	}
+	return time.Unix(ts, 0).Format("01-02 15:04:05")
+}
+
 // ============================================================================
 // ScheduleCommand - 定时任务命令
 // ============================================================================
@@ -803,4 +812,178 @@ func formatDuration(d time.Duration) string {
 	hours := int(d.Hours())
 	mins := int(d.Minutes()) % 60
 	return fmt.Sprintf("%d小时%d分钟", hours, mins)
+}
+
+// ============================================================================
+// MCPCommand - MCP server 状态与重连命令
+// ============================================================================
+
+// MCPCommand 查看 MCP server 连接状态 / 触发重连。
+type MCPCommand struct{}
+
+func NewMCPCommand() *MCPCommand { return &MCPCommand{} }
+
+func (c *MCPCommand) Name() string        { return "mcp" }
+func (c *MCPCommand) Description() string { return "Show MCP server connection status or reconnect failed servers" }
+func (c *MCPCommand) Usage() string {
+	return "/mcp [status|reconnect [name]]"
+}
+func (c *MCPCommand) RequiredRole() models.Role { return models.RoleEmployee }
+
+func (c *MCPCommand) Execute(ctx *Context) (*Result, error) {
+	if ctx.Gateway == nil {
+		return NewResult("⚠️ Gateway not connected, cannot get MCP status"), nil
+	}
+
+	args := strings.Fields(ctx.Args)
+	// 默认子命令为 status
+	sub := "status"
+	if len(args) > 0 {
+		sub = args[0]
+	}
+
+	switch sub {
+	case "status", "":
+		return NewResult(formatMCPStatus(ctx.Gateway.GetMCPStatus())), nil
+	case "reconnect", "connect", "retry":
+		target := ""
+		if len(args) > 1 {
+			target = strings.TrimSpace(args[1])
+		}
+		// 主结果：立即返回"已触发哪些 server"。每个 server 的重连结果异步走 FollowUps 通道逐条反馈。
+		followUps := make(chan string, 16)
+		triggered := ctx.Gateway.ReconnectMCP(ctx.Ctx, target, func(s MCPServerStatus) {
+			followUps <- formatMCPReconnectResult(s)
+		})
+		// 单独 goroutine 等待所有 server 的回调完成（或超时），然后关闭通道。
+		// 关闭后 gateway 的 FollowUps 读取循环退出，结束反馈。
+		go func(count int) {
+			timer := time.NewTimer(180 * time.Second)
+			defer timer.Stop()
+			received := 0
+		waitLoop:
+			for received < count {
+				select {
+				case <-followUps:
+					received++
+				case <-timer.C:
+					break waitLoop
+				}
+			}
+			close(followUps)
+		}(len(triggered))
+
+		var sb strings.Builder
+		sb.WriteString("# MCP Reconnect Triggered\n\n")
+		if len(triggered) == 0 {
+			sb.WriteString("✅ All MCP servers are already connected — nothing to reconnect.\n")
+			sb.WriteString("\n💡 Use `/mcp reconnect all` to force reconnect every server.\n")
+			return NewResult(sb.String()), nil
+		}
+		mode := "failed / not-connected servers"
+		if target == "all" {
+			mode = "all servers (forced)"
+		} else if target != "" {
+			mode = fmt.Sprintf("server `%s`", target)
+		}
+		sb.WriteString(fmt.Sprintf("Reconnecting %s in the background:\n\n", mode))
+		for _, n := range triggered {
+			sb.WriteString(fmt.Sprintf("- `%s`\n", n))
+		}
+		sb.WriteString("\n💡 Each server's result will be reported below as it completes.\n")
+		return &Result{Content: sb.String(), ActionData: make(map[string]any), FollowUps: followUps}, nil
+	default:
+		return NewResult("⚠️ Usage: /mcp [status|reconnect [name]]"), nil
+	}
+}
+
+// formatMCPReconnectResult 渲染单个 server 重连完成后的反馈消息。
+func formatMCPReconnectResult(s MCPServerStatus) string {
+	var sb strings.Builder
+	label := mcpStateLabel(s.State, s.Online)
+	if s.Online {
+		sb.WriteString(fmt.Sprintf("# ✅ %s reconnected\n\n", s.Name))
+	} else {
+		sb.WriteString(fmt.Sprintf("# ❌ %s reconnect failed\n\n", s.Name))
+	}
+	sb.WriteString(fmt.Sprintf("- **Status**: %s\n", label))
+	sb.WriteString(fmt.Sprintf("- **Tools**: %d\n", s.ToolCount))
+	if s.Server != "" {
+		sb.WriteString(fmt.Sprintf("- **Server**: %s\n", s.Server))
+		if s.Version != "" {
+			sb.WriteString(fmt.Sprintf("- **Version**: %s\n", s.Version))
+		}
+	}
+	if s.Error != "" {
+		errMsg := s.Error
+		if len(errMsg) > 300 {
+			errMsg = errMsg[:300] + "..."
+		}
+		sb.WriteString(fmt.Sprintf("- **Error**: %s\n", errMsg))
+	}
+	sb.WriteString(fmt.Sprintf("- **Attempts**: %d\n", s.Attempts))
+	return sb.String()
+}
+
+// formatMCPStatus 把 MCP 状态快照渲染为 Markdown 表格。
+func formatMCPStatus(snap MCPStatusSnapshot) string {
+	var sb strings.Builder
+	sb.WriteString("# MCP Server Status\n\n")
+	if len(snap.Servers) == 0 {
+		sb.WriteString("⚪ No enabled MCP servers configured.\n")
+		return sb.String()
+	}
+
+	sb.WriteString(fmt.Sprintf("- **Online**: %d / %d\n", snap.Online, snap.Total))
+	if snap.Connecting > 0 {
+		sb.WriteString(fmt.Sprintf("- **Connecting**: %d\n", snap.Connecting))
+	}
+	if snap.Failed > 0 {
+		sb.WriteString(fmt.Sprintf("- **Failed**: %d\n", snap.Failed))
+	}
+	sb.WriteString("\n| Name | Status | Tools | Server | Version | Connected |\n")
+	sb.WriteString("|------|--------|-------|--------|---------|-----------|\n")
+
+	for _, s := range snap.Servers {
+		statusText := mcpStateLabel(s.State, s.Online)
+		serverName := s.Server
+		if serverName == "" {
+			serverName = "-"
+		}
+		version := s.Version
+		if version == "" {
+			version = "-"
+		}
+		connectedAt := formatMCPUnixTime(s.ConnectedAt)
+		sb.WriteString(fmt.Sprintf("| %s | %s | %d | %s | %s | %s |\n", s.Name, statusText, s.ToolCount, serverName, version, connectedAt))
+	}
+
+	sb.WriteString("\n**Legend**: 🟢 online / 🔵 connecting / 🟡 reconnecting / 🔴 failed\n\n")
+	sb.WriteString("💡 Use `/mcp reconnect` to reconnect all, or `/mcp reconnect <name>` for a specific server.\n")
+	return sb.String()
+}
+
+// mcpStateLabel 把状态码映射为带 emoji 的可读标签。
+func mcpStateLabel(state string, online bool) string {
+	switch strings.ToLower(state) {
+	case "connected":
+		return "🟢 online"
+	case "connecting":
+		return "🔵 connecting"
+	case "reconnecting":
+		return "🟡 reconnecting"
+	case "failed":
+		return "🔴 failed"
+	case "pending":
+		return "⚪ pending"
+	case "closed":
+		return "⚫ closed"
+	case "disabled":
+		return "disabled"
+	default:
+		if online {
+			return "🟢 online"
+		}
+		return state
+	}
 }

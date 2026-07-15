@@ -88,6 +88,127 @@ func NewManager(llmReg *llm.Registry, dataDir string, sharedSkillsDir string, ba
 	return mgr
 }
 
+// StartMCP 异步启动 MCP server 连接（非阻塞）。
+// 必须在所有 agent 注册完成后、Gateway 正式对外服务前调用。
+// MCP server 的连接/初始化/工具加载全部在后台 goroutine 中进行，单个 server 失败不影响其它。
+func (m *Manager) StartMCP() {
+	m.mu.Lock()
+	cfg := m.mcpConfig
+	if cfg == nil || len(cfg.Servers) == 0 || m.mcpManager != nil {
+		m.mu.Unlock()
+		return
+	}
+	mcpMgr := mcp.NewManager(cfg, m.proxyDecider)
+	mcpMgr.SetToolRegistrar(m) // Manager 自身实现 mcp.ToolRegistrar
+	m.mcpManager = mcpMgr
+	m.mcpInitialized = true
+	m.mu.Unlock()
+
+	logger.Info("Starting MCP servers (async)...")
+	mcpMgr.Start(context.Background())
+}
+
+// RegisterMCPTools 实现 mcp.ToolRegistrar。
+// 把一组 MCP 工具注册到当前所有 agent 的工具注册表中（线程安全）。
+func (m *Manager) RegisterMCPTools(serverName string, wrappers []*mcp.MCPToolWrapper) {
+	if len(wrappers) == 0 {
+		return
+	}
+	m.mu.RLock()
+	agents := make([]*Agent, 0, len(m.agents))
+	for _, ag := range m.agents {
+		if ag != nil && ag.Tools != nil {
+			agents = append(agents, ag)
+		}
+	}
+	m.mu.RUnlock()
+
+	for _, ag := range agents {
+		for _, w := range wrappers {
+			ag.Tools.Register(w)
+			logger.Debug("MCP tool registered", logger.Fields{
+				"agent_id": ag.ID,
+				"tool":     w.Name(),
+				"server":   serverName,
+			})
+		}
+	}
+	logger.Info("MCP tools registered to agents", logger.Fields{
+		"server":     serverName,
+		"tool_count": len(wrappers),
+		"agents":     len(agents),
+	})
+}
+
+// UnregisterMCPTools 实现 mcp.ToolRegistrar。
+// 从所有 agent 的工具注册表中移除某 server 的全部工具。
+// 由于工具名以 server 名为前缀（见 MCPToolWrapper.Name），通过前缀匹配安全下线。
+func (m *Manager) UnregisterMCPTools(serverName string) {
+	prefix := serverName + "_"
+	m.mu.RLock()
+	agents := make([]*Agent, 0, len(m.agents))
+	for _, ag := range m.agents {
+		if ag != nil && ag.Tools != nil {
+			agents = append(agents, ag)
+		}
+	}
+	m.mu.RUnlock()
+
+	for _, ag := range agents {
+		for _, def := range ag.Tools.List() {
+			name := def.Function.Name
+			if strings.HasPrefix(name, prefix) {
+				ag.Tools.Unregister(name)
+			}
+		}
+	}
+	logger.Info("MCP tools unregistered from agents", logger.Fields{
+		"server": serverName,
+		"agents": len(agents),
+	})
+}
+
+// MCPStatus 返回 MCP 各 server 的连接状态快照（详见 mcp.StatusSnapshot）。
+func (m *Manager) MCPStatus() mcp.StatusSnapshot {
+	m.mu.RLock()
+	mgr := m.mcpManager
+	m.mu.RUnlock()
+	if mgr == nil {
+		return mcp.StatusSnapshot{}
+	}
+	return mgr.Status()
+}
+
+// ReconnectMCP 重连 MCP server，每个 server 完成后回调 onResult。
+// target 语义：
+//   - ""：只重连失败/未连接的（已 connected 的跳过）
+//   - "all"：强制重连全部（含已 connected）
+//   - 其它：强制重连指定名称
+//
+// 返回被触发重连的 server 名称列表。
+func (m *Manager) ReconnectMCP(ctx context.Context, target string, onResult func(mcp.ServerStatus)) []string {
+	m.mu.RLock()
+	mgr := m.mcpManager
+	m.mu.RUnlock()
+	if mgr == nil {
+		return nil
+	}
+	return mgr.ReconnectWithFeedback(ctx, target, onResult)
+}
+
+// ShutdownMCP 关闭所有 MCP 连接（用于进程退出）。
+func (m *Manager) ShutdownMCP() {
+	m.mu.RLock()
+	mgr := m.mcpManager
+	m.mu.RUnlock()
+	if mgr == nil {
+		return
+	}
+	if err := mgr.Close(); err != nil {
+		logger.Warn("Failed to close MCP manager", logger.Fields{"error": err.Error()})
+	}
+}
+
 func (m *Manager) SetToolResultCondenseLimit(limit int) {
 	if limit > 0 {
 		m.toolResultCondenseLimit = limit
@@ -859,29 +980,10 @@ func (m *Manager) Register(id string, cfg config.AgentConfig) error {
 		}
 	}
 
-	if m.mcpConfig != nil && len(m.mcpConfig.Servers) > 0 && !m.mcpInitialized {
-		logger.Info("Initializing MCP servers...")
-		mcpMgr := mcp.NewManager(m.mcpConfig, m.proxyDecider)
-		if err := mcpMgr.Initialize(context.Background()); err != nil {
-			logger.Warn("Failed to initialize MCP servers, continuing without MCP tools", logger.Fields{
-				"error": err.Error(),
-			})
-		} else {
-			logger.Info("MCP servers initialized successfully")
-			m.mcpManager = mcpMgr
-			m.mcpInitialized = true
-
-			totalTools := 0
-			for _, client := range mcpMgr.GetAllClients() {
-				totalTools += len(client.GetAllTools())
-			}
-			logger.Info("MCP tools available", logger.Fields{"count": totalTools})
-		}
-	}
-
 	if m.mcpManager != nil {
-		// 使用 MCP manager 已构造的 wrapper（携带每 server 的 call_timeout），
-		// 而非这里重新构造，否则 CallTimeout 会丢失。
+		// 使用 MCP manager 当前已连接的工具 wrapper（携带每 server 的 call_timeout），
+		// 注册到该 agent。之后 server 在线状态变化时，mcp.Manager 会通过 ToolRegistrar
+		// 回调（RegisterMCPTools / UnregisterMCPTools）动态增删，无需在此处重复处理。
 		for _, wrapper := range m.mcpManager.GetAllTools() {
 			toolReg.Register(wrapper)
 			logger.Info("MCP tool registered", logger.Fields{

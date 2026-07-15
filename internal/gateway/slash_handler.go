@@ -1,6 +1,8 @@
 package gateway
 
 import (
+	"context"
+
 	"github.com/gorilla/websocket"
 	"github.com/chawuciren/evoduck/internal/command"
 	"github.com/chawuciren/evoduck/internal/session"
@@ -66,6 +68,7 @@ func (h *SlashCommandHandler) Handle(
 		Command:    message,
 		Name:       name,
 		Args:       args,
+		Ctx:        context.Background(),
 		Gateway:    h.gateway, // Gateway 实现 GatewayAccessor 接口
 	}
 
