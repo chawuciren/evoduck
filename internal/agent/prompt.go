@@ -39,6 +39,7 @@ type PromptBuilder struct {
 	memoryConfig  config.MediumTermConfig    // 记忆加载配置
 	totalChars    int                        // 当前 prompt 总字符数（用于统计）
 	llmProvider   llm.Provider               // LLM 提供商（用于压缩）
+	fusionEnabled bool                       // 是否注册了 Fusion 圆桌会诊工具
 	// 阶段2：稳定块预构建缓存
 	stableSystemPrompt string // 缓存的稳定系统提示（不依赖运行时状态）
 	stablePromptHash   string // 用于检测是否需要重建（基于工具/技能/文件变化）
@@ -72,6 +73,12 @@ func (pb *PromptBuilder) SetMemoryConfig(cfg config.MediumTermConfig) {
 // SetLLMProvider 设置 LLM 提供商
 func (pb *PromptBuilder) SetLLMProvider(provider llm.Provider) {
 	pb.llmProvider = provider
+}
+
+// SetFusionEnabled 标记当前 agent 是否注册了 Fusion 圆桌会诊工具。
+// 注册时由 Manager 调用；Build() 据此决定是否注入 Fusion 使用约束段。
+func (pb *PromptBuilder) SetFusionEnabled(enabled bool) {
+	pb.fusionEnabled = enabled
 }
 
 // loadFileNoTrack 加载文件但不计入 totalChars (用于压缩层初始化)
@@ -110,6 +117,12 @@ func (pb *PromptBuilder) Build(_ context.Context, sess *session.Session, userMes
 
 	// 1. 稳定规则（从 buildSystemBase 拆分出的纯规则部分）
 	stableParts = append(stableParts, pb.buildStableRules())
+
+	// 1b. Fusion 圆桌会诊使用约束（仅在本 agent 注册了 Fusion 工具时注入；稳定块）
+	if pb.fusionEnabled {
+		stableParts = append(stableParts, pb.buildFusionRules())
+		ptLog.Debug("Fusion usage rules added")
+	}
 
 	// 2. 工具定义（稳定）
 	if pb.toolRegistry != nil {
@@ -345,6 +358,37 @@ NEVER recreate the plan from scratch; NEVER reset completed progress
 	### Memory Loading
 	- user MEMORY.md (longterm): permanent user-specific information, always visible
 	- memory/YYYY-MM-DD.md: recent activities for context`, pb.workspace)
+}
+
+// buildFusionRules 构建 Fusion 圆桌会诊的使用约束（稳定块）。
+// 目的：把 Fusion 从"卡住时才用的升级工具"降为"非平凡结论交付前的标准校验关卡"。
+// 仅在当前 agent 注册了 fusion 工具时注入（见 SetFusionEnabled）。
+func (pb *PromptBuilder) buildFusionRules() string {
+	return `## Fusion Roundtable (Mandatory Validation Checkpoint)
+
+You have the ` + "`fusion`" + ` tool, which convenes a multi-model roundtable to fact-check and stress-test your conclusions before you act on them. Session history is attached automatically — pass only your conclusion/plan in the query.
+
+### Why this matters
+A conclusion that has not been through Fusion is a DRAFT. Treating Fusion as optional is the failure mode this rule exists to prevent. The cost is a few seconds of parallel calls; the benefit is catching hallucinated facts, wrong file/function references, and plans that look right but break on edge cases.
+
+### MANDATORY checkpoints — call ` + "`fusion`" + ` at least once in each of these situations:
+1. **Before reporting any research / investigation conclusion to the user.**
+   After gathering information (reading files, searching code, fetching docs, exploring the codebase) and BEFORE you summarize findings or hand back an answer, run Fusion to validate the conclusion. Do not deliver a research conclusion without at least one Fusion pass.
+2. **Between research and execution in a multi-step task.**
+   When a task has an investigation phase followed by a do-the-work phase (investigate root cause → fix; research options → implement; survey → refactor), call Fusion at the boundary — after research, before the first irreversible execution step (file_write/file_edit/file_patch/exec/deploy/large change). Let the verdict shape what you actually do.
+3. **Before any high-stakes or hard-to-reverse action.**
+   Before edits, deletions, deploys, schema changes, large refactors, or irreversible commands, run Fusion to pressure-test the plan.
+
+### When Fusion is NOT required
+- Trivial direct answers, single-file lookups, factual recall already in context.
+- Pure routine execution with no conclusion or plan to validate (e.g. "list files in X").
+- Trivial conversational replies. Do not pad trivial turns with Fusion.
+
+### How to use it well
+- Phrase the query as: state your current conclusion/plan AND what you want validated. Example: "I plan to do X to fix Y. Is this the right approach, and what am I missing?"
+- Surface the Fusion verdict (or a faithful summary) to the user before committing to the conclusion. If Fusion exposes a real flaw, revise the conclusion accordingly.
+- If the judge says information is insufficient, it will name what to check — gather that, then re-run Fusion.
+- Fusion can be called multiple times; it is a checkpoint, not a one-shot.`
 }
 
 // buildDynamicSystemInfo 构建动态的系统信息（每次请求可能变化）

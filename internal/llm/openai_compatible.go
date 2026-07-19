@@ -303,7 +303,13 @@ func (p *OpenAICompatibleProvider) ChatWithOptions(ctx context.Context, messages
 }
 
 func (p *OpenAICompatibleProvider) ChatStream(ctx context.Context, messages []models.Message, tools []models.ToolDefinition) (<-chan models.StreamEvent, error) {
-	requestBody, err := p.buildRequest(messages, tools, p.defaultOptions, true)
+	return p.ChatStreamWithOptions(ctx, messages, tools, p.defaultOptions)
+}
+
+// ChatStreamWithOptions 使用指定 options 进行流式调用，不修改共享的 defaultOptions 字段，并发安全。
+// 供 fusion 圆桌等需要并发调用同一 provider 实例、但各成员 model 不同的场景使用。
+func (p *OpenAICompatibleProvider) ChatStreamWithOptions(ctx context.Context, messages []models.Message, tools []models.ToolDefinition, opts ChatOptions) (<-chan models.StreamEvent, error) {
+	requestBody, err := p.buildRequest(messages, tools, p.mergeOptions(p.defaultOptions, opts), true)
 	if err != nil {
 		return nil, err
 	}

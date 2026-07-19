@@ -25,6 +25,7 @@ type Config struct {
 	Logging                 LoggingConfig          `yaml:"logging"` // 日志配置
 	Proxy                   ProxyConfig            `yaml:"proxy"`   // 代理配置
 	Daemon                  DaemonConfig           `yaml:"daemon"`  // Daemon 配置
+	Fusion                  FusionConfig           `yaml:"fusion"`  // Fusion 圆桌会诊配置
 }
 
 // DaemonConfig daemon 进程配置
@@ -444,6 +445,22 @@ type MCPServerConfig struct {
 	Headers     map[string]string `yaml:"headers"`      // remote: HTTP 头
 	Timeout     int               `yaml:"timeout"`      // 初始化超时时间（毫秒）
 	CallTimeout int               `yaml:"call_timeout"` // 单次工具调用兜底超时（毫秒）；0 表示使用全局 Tools.DefaultTimeout
+}
+
+// FusionConfig Fusion 圆桌会诊工具配置
+type FusionConfig struct {
+	Enabled bool           `yaml:"enabled"` // 全局开关，false 时不注册该 tool
+	Panel   []FusionMember `yaml:"panel"`   // 圆桌成员列表
+	Judge   *FusionMember  `yaml:"judge"`   // 裁判模型（mode=judge/both 时使用）
+	Mode    string         `yaml:"mode"`    // 默认返回模式: judge | raw | both
+	Timeout string         `yaml:"timeout"` // 单个成员调用超时（如 "120s"）
+}
+
+// FusionMember Fusion 圆桌成员或裁判的 provider/model 引用
+type FusionMember struct {
+	Provider string `yaml:"provider"` // 引用 llm.providers 中已配置的 provider 名称
+	Model    string `yaml:"model"`    // 该 provider 下的模型 ID
+	Label    string `yaml:"label"`    // 可选，展示标签（如 "DeepSeek"），为空时自动生成
 }
 
 func Load(path string) (*Config, error) {

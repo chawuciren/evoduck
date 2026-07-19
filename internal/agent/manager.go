@@ -50,6 +50,7 @@ type Manager struct {
 	toolResultCondenseLimit int
 	imageAutoCompressLimit  int
 	toolDefaultTimeout      time.Duration // 工具调用兜底超时
+	fusionConfig            config.FusionConfig
 }
 
 type reloadProvider struct {
@@ -58,6 +59,13 @@ type reloadProvider struct {
 
 func (p reloadProvider) ReloadSystem(ctx context.Context, scope string) (string, error) {
 	return p.manager.ReloadSystem(ctx, scope)
+}
+
+// SetFusionConfig 设置 Fusion 圆桌会诊配置（影响之后注册的 agent）
+func (m *Manager) SetFusionConfig(cfg config.FusionConfig) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.fusionConfig = cfg
 }
 
 // SetToolDefaultTimeout 设置工具调用兜底超时（影响之后注册的 agent）
@@ -951,6 +959,13 @@ func (m *Manager) Register(id string, cfg config.AgentConfig) error {
 			}))
 		})
 		registerTool("system_reload", true, func() { toolReg.Register(tools.NewSystemReloadTool(reloadProvider{manager: m})) })
+		// Fusion 圆桌会诊工具（仅 admin）
+		if m.fusionConfig.Enabled && len(m.fusionConfig.Panel) > 0 {
+			toolReg.Register(tools.NewFusionTool(m.llmReg, m.fusionConfig, func() tools.SessionGateway {
+				return m.sessionGateway
+			}))
+			logger.Info("Fusion tool registered", logger.Fields{"agent_id": id})
+		}
 	}
 
 	// 加载 Skills
@@ -998,6 +1013,11 @@ func (m *Manager) Register(id string, cfg config.AgentConfig) error {
 	promptBuilder.SetBootstrapConfig(m.memoryConfig.Bootstrap)
 	promptBuilder.SetMemoryConfig(m.memoryConfig.MediumTerm)
 	promptBuilder.SetLLMProvider(provider)
+
+	// Fusion 工具是否对本 agent 可用（决定是否在 system prompt 中注入 Fusion 使用约束）。
+	// 仅 admin 且 fusion 已启用且配置了 panel 时注册该工具。
+	fusionAvailable := role == models.RoleAdmin && m.fusionConfig.Enabled && len(m.fusionConfig.Panel) > 0
+	promptBuilder.SetFusionEnabled(fusionAvailable)
 
 	memMgr, err := memory.NewManager(cfg.Workspace, m.memoryConfig.MediumTerm.Dir, m.memoryConfig.CoreMemory.File, m.dataDir, id)
 	if err != nil {
