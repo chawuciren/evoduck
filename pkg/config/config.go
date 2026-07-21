@@ -27,6 +27,7 @@ type Config struct {
 	Daemon                  DaemonConfig           `yaml:"daemon"`  // Daemon 配置
 	SessionArchive          SessionArchiveConfig    `yaml:"session_archive"` // 会话归档配置（/resume）
 	Fusion                  FusionConfig           `yaml:"fusion"`  // Fusion 圆桌会诊配置
+	ImageDescribe           ImageDescribeConfig    `yaml:"image_describe"` // 读图工具配置（让无视觉模型看图）
 }
 
 // DaemonConfig daemon 进程配置
@@ -469,6 +470,15 @@ type FusionMember struct {
 	Provider string `yaml:"provider"` // 引用 llm.providers 中已配置的 provider 名称
 	Model    string `yaml:"model"`    // 该 provider 下的模型 ID
 	Label    string `yaml:"label"`    // 可选，展示标签（如 "DeepSeek"），为空时自动生成
+}
+
+// ImageDescribeConfig 读图工具配置
+// 用于让没有视觉能力的主模型通过调用有视觉能力的模型来"看图"
+type ImageDescribeConfig struct {
+	Enabled  bool   `yaml:"enabled"`  // 全局开关，false 时不注册该 tool
+	Provider string `yaml:"provider"` // 视觉模型 provider（引用 llm.providers 中已配置的名称）
+	Model    string `yaml:"model"`    // 该 provider 下的视觉模型 ID（如 gpt-4o / qwen-vl-plus / llava:7b）
+	Timeout  string `yaml:"timeout"`  // 单次调用超时（默认 60s）
 }
 
 func Load(path string) (*Config, error) {

@@ -51,6 +51,7 @@ type Manager struct {
 	imageAutoCompressLimit  int
 	toolDefaultTimeout      time.Duration // 工具调用兜底超时
 	fusionConfig            config.FusionConfig
+	imageDescribeConfig     config.ImageDescribeConfig
 }
 
 type reloadProvider struct {
@@ -66,6 +67,13 @@ func (m *Manager) SetFusionConfig(cfg config.FusionConfig) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.fusionConfig = cfg
+}
+
+// SetImageDescribeConfig 设置读图工具配置（影响之后注册的 agent）
+func (m *Manager) SetImageDescribeConfig(cfg config.ImageDescribeConfig) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.imageDescribeConfig = cfg
 }
 
 // SetToolDefaultTimeout 设置工具调用兜底超时（影响之后注册的 agent）
@@ -966,6 +974,16 @@ func (m *Manager) Register(id string, cfg config.AgentConfig) error {
 			}))
 			logger.Info("Fusion tool registered", logger.Fields{"agent_id": id})
 		}
+	}
+
+	// 读图工具（所有角色可用；需配置 enabled + provider + model）
+	if m.imageDescribeConfig.Enabled && m.imageDescribeConfig.Provider != "" && m.imageDescribeConfig.Model != "" {
+		toolReg.Register(tools.NewImageDescribeTool(m.llmReg, m.imageDescribeConfig))
+		logger.Info("ImageDescribe tool registered", logger.Fields{
+			"agent_id": id,
+			"provider": m.imageDescribeConfig.Provider,
+			"model":    m.imageDescribeConfig.Model,
+		})
 	}
 
 	// 加载 Skills
