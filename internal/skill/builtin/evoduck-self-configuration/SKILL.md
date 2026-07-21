@@ -54,17 +54,51 @@ Runtime initialization does the following:
 
 ## First-Run Setup
 
-The first-run flow is catalog-driven.
+The first-run flow is catalog-driven and interactive. It writes the config file to disk after a final validation pass.
 
-Important behaviors:
-- `evoduck run` triggers first-run setup automatically when the config still matches the seeded default and the default provider still needs setup
-- `evoduck setup` runs the setup flow explicitly
-- setup chooses a provider, credentials, base URL if needed, a default model, gateway host/port, and optional extra channels
-- first-run provider choices come from the provider catalog
-- first-run channel choices come from the channel catalog
-- `webchat` is always the built-in gateway web entry and does not require extra setup
+### Trigger
 
-First-run provider families currently include both vendor-native and compatible modes such as:
+- `evoduck run` triggers first-run setup automatically when the config still matches the seeded default template **and** the default provider still needs credentials. The exact detection rules are:
+  - `default_agent` is `admin-bot`
+  - `default_provider` is the seeded default and `default_model` is the seeded default model
+  - exactly one agent (`admin-bot`, role `admin`) and one channel (`webchat`)
+  - the default provider block still matches the provider catalog's seeded models exactly
+  - the default provider's `api_key` is empty **and** the provider type is not `ollama` (ollama needs no key)
+- `evoduck setup` runs the same setup flow explicitly. Re-running it on an already-configured instance is a no-op when the config no longer matches the seeded default.
+- A config that was hand-edited away from the seeded default will not auto-trigger setup, even if it is missing credentials.
+
+### What the wizard collects
+
+The wizard runs these steps in order:
+
+1. **Provider** — choose from `FirstRunProviderCatalog()`. Every catalog entry supports first-run, both vendor-native types (`openai`, `anthropic`, `gemini`, `ollama`, `bedrock`, `vertex-ai`, `azure`) and compatible/preset types. Choices accept the numeric alias, the type name, or an alias.
+2. **Credentials and base URL** — gathered per provider kind:
+   - `openai`, `anthropic`, `gemini`: API key required (anthropic/openai also prompt base URL with default).
+   - `ollama`: base URL only, no key.
+   - `bedrock`, `vertex-ai`: no model list fetch required; cloud metadata comes from env or `provider.metadata`.
+   - the generic OpenAI-/Gemini-/Anthropic-compatible types: validated base URL + optional API key.
+   - `minimax` / `minimax-cn` and all other compatible presets: base URL with default + optional API key.
+3. **Default model** — the wizard attempts a live `ListModels` call against the chosen provider; if it succeeds it lists the discovered models (plus a "custom model name" option) and offers the catalog default as the default. If the live fetch fails it falls back to manual entry (required for the generic compatible types, optional-with-default for others).
+4. **Gateway host and port** — defaults `127.0.0.1` / `18789`; port validated to `1..65535`.
+5. **Optional channels** — `webchat` is always included as the built-in gateway entry and is not offered for setup. Optional catalog entries (`weixin`, `wecom`, and any plugin-provided channel that declares first-run support) are listed with their setup kind:
+   - `weixin`: QR-login flow that yields the channel token, user id, and optional account metadata
+   - `wecom`: interactive credential entry for `bot_id` and `secret`
+   - This step can be skipped (`s`) and redone later via `evoduck channel add` or by editing the config.
+6. **Save and validate** — the wizard writes the config, applies runtime normalization, and runs `ValidateWithEnv()` (which includes both structural validation and provider environment checks). If validation fails the config is not saved and the error is shown.
+
+### What gets written
+
+- `llm.providers` is replaced with a single block for the chosen provider, seeded from the provider catalog's model list (ensuring the chosen default model is present).
+- The `admin-bot` agent's provider/model are pointed at the chosen provider and default model.
+- `gateway.host` / `gateway.port` are written.
+- Any additional channel chosen in step 5 is appended alongside the always-present `webchat` entry.
+
+The printed summary shows the chosen provider and the config file path. Provider keys are written into the config (consider `${ENV_VAR}` substitution if you prefer to keep them out of the file).
+
+### First-run catalogs
+
+First-run provider choices come from `providerPresets` filtered by `SupportsFirstRun`; all current catalog entries are first-run-eligible, including vendor-native and compatible/preset types such as:
+
 - `openai-compatible`
 - `openai-responses-compatible`
 - `gemini-compatible`
@@ -76,12 +110,18 @@ First-run provider families currently include both vendor-native and compatible 
 - `deepseek`
 - `bedrock`
 - `vertex-ai`
-- additional preset compatible providers from the provider catalog
+- `azure`
+- and the full set of catalog presets (dashscope, zhipu, bytedance, openrouter, xai, groq, mistral, cohere, novita, moonshot, nvidia, perplexity, together, fireworks, cerebras, replicate, sambanova, iflytek-spark, baidu-qianfan, tencent-hunyuan, siliconflow, minimax/minimax-cn, litellm/lmstudio/vllm, xiaomi-mimo, cloudflare-ai-gateway, vercel-ai-gateway, helicone, portkey, akle, kilo, opencode, google-ai-studio)
 
-First-run channel choices currently include:
-- `webchat` — built-in gateway web interface
+First-run channel choices come from `channelCatalog` filtered by `SupportsFirstRun`:
+
+- `webchat` — built-in gateway web interface (always present, never set up via the wizard)
 - `weixin` — QR-login flow that yields token and optional account metadata
 - `wecom` — AI Bot credentials using `bot_id` and `secret`
+
+### Post-setup
+
+After setup, `evoduck run` starts the gateway. Channels added later with `evoduck channel add` and most `logging`/`memory`/`scheduler` settings can be applied with `system_reload scope="config"`; provider, tool-registration, MCP, plugin, proxy-process, and listening-port changes require a restart (see Reload Matrix).
 
 ## Configuration Files
 
@@ -89,14 +129,14 @@ The config file is YAML. Current top-level sections include:
 - `gateway`: host, port, access token
 - `default_agent`: default agent id
 - `data_dir`: runtime data root
-- `tool_result_condense_limit`: oversize tool-result truncation threshold
-- `image_auto_compress_limit`: image auto-compress threshold
+- `tool_result_condense_limit`: oversize tool-result truncation threshold (default `32768`)
+- `image_auto_compress_limit`: image auto-compress threshold (default `32768`)
 - `agents`: agent workspace, role, permissions, provider/model overrides, user isolation, per-agent generation options
 - `shared`: shared skill directory
 - `llm`: default provider, default model, provider definitions, model options
 - `channels`: webchat, weixin, wecom, or plugin-provided channel bindings
 - `plugins`: plugin websocket server and plugin definitions
-- `tools`: backend-call and session tool configuration
+- `tools`: backend-call, session, and global tool-call timeout configuration
 - `memory`: short-term, medium-term, long-term, core memory, and bootstrap limits
 - `heartbeat`: periodic self-check prompt settings
 - `scheduler`: built-in system task schedules
@@ -104,6 +144,9 @@ The config file is YAML. Current top-level sections include:
 - `logging`: runtime logging settings
 - `proxy`: global and per-surface proxy policy
 - `daemon`: daemon control settings
+- `session_archive`: `/resume` session archive retention (default enabled)
+- `fusion`: Fusion roundtable consultation tool (admin-only)
+- `image_describe`: vision-delegated image description tool (all roles)
 
 Sensitive fields include `token`, `api_key`, `secret`, passwords, and auth headers. Never expose secret values in responses. Prefer environment variables such as `${OPENAI_API_KEY}` in config.
 
@@ -119,8 +162,8 @@ gateway:
 
 default_agent: admin-bot
 data_dir: "~/.evoduck"
-tool_result_condense_limit: 50000
-image_auto_compress_limit: 5242880
+tool_result_condense_limit: 32768 # default 32*1024
+image_auto_compress_limit: 32768 # default 32*1024
 
 logging:
   level: INFO # DEBUG, INFO, WARN, ERROR
@@ -376,6 +419,7 @@ shared:
   skills_dir: "~/.evoduck/shared/skills"
 
 tools:
+  default_timeout: 60s # global fallback timeout for all tool calls; 0 disables the fallback
   backend_call:
     endpoints:
       example-api:
@@ -490,6 +534,7 @@ mcp:
       command: ["npx", "-y", "one-search-mcp"]
       environment: {}
       timeout: 30000
+      call_timeout: 0 # per-call fallback in ms; 0 uses tools.default_timeout
 
     remote-search:
       type: remote
@@ -498,6 +543,39 @@ mcp:
       headers:
         Authorization: Bearer ${MCP_TOKEN}
       timeout: 30000
+      call_timeout: 0
+
+# Session archive powers the /resume feature. Enabled by default; the config
+# below is the effective default behavior and can be omitted entirely.
+# To DISABLE it, set enabled: false AND set max_per_key or max_age_hours to a
+# non-zero value (see Config Field Reference for the exact rule).
+session_archive:
+  enabled: true
+  max_per_key: 50
+  max_age_hours: 720 # 30 days
+
+# Fusion roundtable consultation tool. Registered only when enabled and panel
+# is non-empty, and only for admin agents.
+fusion:
+  enabled: false
+  mode: judge # judge | raw | both
+  timeout: "120s"
+  panel:
+    - provider: deepseek # references an llm.providers entry
+      model: deepseek-v4-pro
+      label: DeepSeek # optional
+  judge:
+    provider: anthropic
+    model: claude-sonnet-4-5
+    label: Judge
+
+# Vision-delegated image description tool. Lets a non-vision main model "see"
+# images by calling a vision-capable model. Available to all roles when enabled.
+image_describe:
+  enabled: false
+  provider: openai-compatible # references an llm.providers entry
+  model: gpt-4o
+  timeout: "60s"
 ```
 
 ## Config Field Reference
@@ -512,8 +590,8 @@ mcp:
 
 - `default_agent`: string. Agent id used when a request does not explicitly select an agent. Config reload can update gateway/router default behavior where wired, but verify in runtime.
 - `data_dir`: string path. Runtime data root for agents, users, sessions, scheduler state, subagents, and knowledge. Changing this after startup should be treated as restart-required.
-- `tool_result_condense_limit`: integer. Threshold for large tool-result condensation behavior. Treat as runtime-behavior config and verify after reload.
-- `image_auto_compress_limit`: integer. Threshold for automatic image compression behavior. Treat as runtime-behavior config and verify after reload.
+- `tool_result_condense_limit`: integer. Threshold for large tool-result condensation behavior. Default `32768`. Treat as runtime-behavior config and verify after reload.
+- `image_auto_compress_limit`: integer. Threshold for automatic image compression behavior. Default `32768`. Treat as runtime-behavior config and verify after reload.
 
 ### `logging`
 
@@ -584,7 +662,7 @@ Provider fields:
 - `top_logprobs`: integer.
 - `store`: nullable bool.
 - `include_usage`: nullable bool.
-- `metadata`: map string to string.
+- `metadata`: map string to string. Provider-specific routing/safety fields. Used by `bedrock` (`region`, `profile`) and `vertex-ai` (`project`, `location`, `region`); see Provider Type Reference for which keys each cloud type reads.
 - `chat_template_kwargs`: map string to any.
 
 ### `agents`
@@ -623,6 +701,10 @@ Channel config may be rebuilt by config reload, but connection-level changes can
 ### `shared`
 
 - `shared.skills_dir`: string path. Shared skills are loaded from this directory. Changing this after manager initialization should be treated as restart-required. New or edited skill files inside the current directory can be loaded with `system_reload scope="skills"`.
+
+### `tools` (top-level)
+
+- `tools.default_timeout`: Go duration. Global fallback timeout applied to all tool calls (built-in, plugin, and MCP) when the call has no more specific timeout. Default `60s`. `0` disables the fallback. Changes take effect for newly registered agents, so treat as restart-required for active agents.
 
 ### `tools.backend_call`
 
@@ -730,13 +812,41 @@ Plugin process definitions, websocket server settings, and plugin capabilities s
 - `mcp.servers.<name>.environment`: map string to string. `MEMORY_FILE_PATH` is normalized as a path if present.
 - `mcp.servers.<name>.url`: string. Used by remote MCP servers.
 - `mcp.servers.<name>.headers`: map string to string. Sensitive as a group.
-- `mcp.servers.<name>.timeout`: integer milliseconds.
+- `mcp.servers.<name>.timeout`: integer milliseconds. Initialization timeout.
+- `mcp.servers.<name>.call_timeout`: integer milliseconds. Per-tool-call fallback timeout; `0` means fall back to `tools.default_timeout`.
 
 MCP server process and connection changes normally require service restart to fully apply to active agents.
 
+### `session_archive`
+
+- `session_archive.enabled`: bool. Whether `/resume` session archiving is active.
+- `session_archive.max_per_key`: integer. Maximum archive entries kept per key.
+- `session_archive.max_age_hours`: integer. Maximum age in hours before an archive entry is purged.
+
+Default-on behavior: archiving is enabled by default. To **disable** it you must set `enabled: false` **and** set either `max_per_key` or `max_age_hours` to a non-zero value. If you only set `enabled: false` with all-zero limits, archiving stays enabled (this guards `/resume` against being silently turned off by an under-specified block). The simplest way to disable is to write an explicit block with `enabled: false` and non-zero limits. When enabled, archive data is stored under `<data_dir>/sessions.archive`.
+
+### `fusion`
+
+- `fusion.enabled`: bool. Master switch; the tool is not registered when `false`.
+- `fusion.panel`: list of `FusionMember` references (`provider`, `model`, optional `label`). Must be non-empty for the tool to register.
+- `fusion.judge`: optional `FusionMember` used as the deciding model when `mode` is `judge` or `both`.
+- `fusion.mode`: default return mode — `judge`, `raw`, or `both`.
+- `fusion.timeout`: per-member call timeout (Go duration string, e.g. `"120s"`).
+
+`provider` and `model` values must reference an existing entry under `llm.providers` and a model declared under that provider. The Fusion tool is registered only for **admin** agents; it requires `enabled: true` plus a non-empty `panel`. Treat changes as restart-required.
+
+### `image_describe`
+
+- `image_describe.enabled`: bool. Master switch; the tool is not registered when `false`.
+- `image_describe.provider`: string. References an existing entry under `llm.providers`.
+- `image_describe.model`: string. Model id declared under that provider (a vision-capable model, e.g. `gpt-4o`, `qwen-vl-plus`, `llava:7b`).
+- `image_describe.timeout`: per-call timeout (Go duration string, e.g. `"60s"`).
+
+The tool is registered for **all roles** (admin, employee, customer) when `enabled` is true and both `provider` and `model` are non-empty. It lets a non-vision main model delegate image understanding to the configured vision model. Treat changes as restart-required.
+
 ## Provider Type Reference
 
-Direct registry provider types include:
+Direct registry provider types (each with a dedicated constructor in the LLM registry) include:
 - `openai`
 - `openai-compatible`
 - `openai-responses-compatible`
@@ -744,58 +854,42 @@ Direct registry provider types include:
 - `anthropic-compatible`
 - `gemini`
 - `gemini-compatible`
+- `google-ai-studio` (routes to the Gemini provider)
 - `ollama`
+- `deepseek`
+- `openrouter`
+- `dashscope`, `dashscope-cn`, `dashscope-coding`, `dashscope-coding-cn`
+- `xai`
+- `mistral`
+- `perplexity`
+- `cohere`
+- `replicate`
 - `bedrock`
 - `vertex-ai`
 - `azure`
 
-Preset provider types normalized to OpenAI-compatible behavior at initialization include many catalog entries such as:
-- `deepseek`
-- `openrouter`
-- `dashscope`
-- `dashscope-cn`
-- `dashscope-coding`
-- `dashscope-coding-cn`
-- `xai`
-- `groq`
-- `mistral`
-- `together`
-- `fireworks`
-- `perplexity`
-- `moonshot`
-- `nvidia`
-- `cloudflare-ai-gateway`
-- `vercel-ai-gateway`
-- `helicone`
-- `portkey`
-- `cohere`
-- `novita`
-- `google-ai-studio`
+The catalog presets above (`deepseek`, `openrouter`, `dashscope*`, `xai`, `mistral`, `perplexity`, `cohere`, `replicate`, `google-ai-studio`) have provider-specific behavior — they are not plain OpenAI-compatible pass-through. Catalog presets with OpenAI-compatible transport (verified at startup, not as a distinct registry type) include:
+- `minimax`, `minimax-cn`
+- `groq`, `nvidia`, `moonshot`, `together`, `fireworks`
+- `cerebras`, `sambanova`
+- `bytedance`, `bytedance-cn`, `baidu-qianfan`, `tencent-hunyuan`, `iflytek-spark`
 - `siliconflow`
-- `zhipu`
-- `zhipu-cn`
-- `zhipu-coding`
-- `zhipu-coding-cn`
-- `baidu-qianfan`
-- `tencent-hunyuan`
-- `bytedance`
-- `bytedance-cn`
-- `iflytek-spark`
-- `cerebras`
-- `replicate`
-- `sambanova`
-- `akle`
-- `kilo`
-- `opencode`
+- `zhipu`, `zhipu-cn`, `zhipu-coding`, `zhipu-coding-cn`
+- `novita`, `akle`, `kilo`, `opencode`
+- `cloudflare-ai-gateway`, `vercel-ai-gateway`, `helicone`, `portkey`
+- `xiaomi-mimo` (Xiaomi MiMo)
+- `litellm`, `lmstudio`, `vllm` (local OpenAI-compatible servers)
 - additional compatible presets from the provider catalog
+
+Every catalog entry currently sets `SupportsFirstRun: true`, so all of the above are eligible in the first-run wizard. Provider type is matched case-insensitively and trimmed; numeric aliases (e.g. `1` = `openai-compatible`) are accepted by the wizard and `NormalizeFirstRunProviderName`.
 
 Provider environment validation rules currently include:
 - `openai`: needs `api_key` or `OPENAI_API_KEY`
 - `anthropic`: needs `api_key` or `ANTHROPIC_API_KEY`
 - `gemini`: needs `api_key`, `GEMINI_API_KEY`, or `GOOGLE_API_KEY`
-- OpenAI-compatible and preset providers: need non-empty `base_url`
+- OpenAI-compatible, Responses-compatible, Gemini-compatible, Anthropic-compatible, and all catalog preset providers: need non-empty `base_url`
 - `bedrock`: needs `metadata.region`, `AWS_REGION`, or `AWS_DEFAULT_REGION`
-- `vertex-ai`: needs project and location/region metadata or matching Google Cloud env vars
+- `vertex-ai`: needs `metadata.project` (or `GOOGLE_CLOUD_PROJECT`) and `metadata.location`/`metadata.region` (or `GOOGLE_CLOUD_LOCATION`/`GOOGLE_CLOUD_REGION`)
 - `ollama`: no API key environment validation
 
 ## Validation Rules
@@ -815,6 +909,7 @@ Current config validation enforces at least:
 - `llm.default_model` must be declared under the default provider's `models`
 - every provider needs non-empty `type`, non-empty `default_model`, and at least one `models` entry
 - every model entry needs non-empty `id` and `name`
+- model `id` must be unique within a single provider (duplicate ids are rejected)
 - model `type` must be `chat`, `embedding`, or `rerank`
 - model `context_window` and `max_output_tokens` cannot be negative
 - provider `default_model` must exist in provider `models`
@@ -838,6 +933,10 @@ Current config validation enforces at least:
 - plugin `restart`, when set, must be `always`, `on-failure`, or `never`
 - plugin restart and timeout numeric fields cannot be negative
 - plugin capabilities must be `tool`, `provider`, `channel`, or `hook`
+- `tools.default_timeout` cannot be negative
+- `mcp.servers.<name>.timeout` and `mcp.servers.<name>.call_timeout` cannot be negative
+
+`session_archive` has no structural validation beyond field types, but its effective enabled state follows the default-on rule described under `session_archive` in Config Field Reference.
 
 ## Reload Matrix
 
@@ -867,10 +966,11 @@ Usually requires service restart or agent re-registration to fully apply:
 - agent definitions, roles, workspaces, permissions, provider/model selection, and LLM generation options already bound to active agents
 - LLM provider definitions and default provider/model used by already registered agents
 - proxy changes that affect process startup or integration surfaces
-- tool registration changes controlled by `tools`
+- tool registration changes controlled by `tools` (including `tools.default_timeout`, `tools.session`, and `tools.backend_call`)
 - backend endpoint additions/removals that affect whether a tool is registered
-- MCP server additions, removals, command changes, headers, or enabled state
+- MCP server additions, removals, command changes, headers, `timeout`/`call_timeout`, or enabled state
 - plugin websocket server and plugin process definitions
+- `fusion` and `image_describe` tool registration (provider/model/panel/enabled changes)
 
 If a change touches active providers, tools, MCP, plugins, proxy behavior, agent workspaces, daemon/listener ports, or process listening addresses, tell the user a restart is the safe path even if `system_reload config` validates the file.
 
@@ -973,6 +1073,8 @@ Common boundaries:
 - plugin tools appear only after plugins connect and register capabilities
 - internal subagent access depends on `authorized_subagents`
 - external subagent access depends on `authorized_external_subagents`
+- `fusion` (roundtable consultation) is admin-only and registered only when `fusion.enabled` is true and `panel` is non-empty
+- `image_describe` (vision-delegated image description) is available to all roles when `image_describe.enabled` is true and both `provider` and `model` are set
 
 File tools are constrained by authorized directories. If a write fails due to path authorization, inspect agent permissions and use an allowed path instead of trying to escape the sandbox.
 

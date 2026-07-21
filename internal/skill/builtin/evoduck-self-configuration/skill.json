@@ -1,7 +1,7 @@
 {
   "schemaVersion": "1.0",
   "name": "evoduck-self-configuration",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Comprehensive guide for inspecting and updating EvoDuck configuration, setup flow, runtime state, skills, memory, tools, proxy, MCP, plugins, and channels.",
   "license": "MIT",
   "compatibility": ["evoduck"],
