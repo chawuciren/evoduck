@@ -6,6 +6,7 @@ import (
 	"github.com/chawuciren/evoduck/internal/session"
 	"github.com/chawuciren/evoduck/pkg/models"
 	"github.com/gorilla/websocket"
+	"time"
 )
 
 // Context 命令执行上下文
@@ -69,6 +70,14 @@ type GatewayAccessor interface {
 	SendSessionOutgoingMessage(ctx context.Context, sessionKey string, outgoing *models.OutgoingMessage) (int, error)
 	RunSessionInput(ctx context.Context, agentID, sessionKey, input string) error
 
+	// 任务控制相关（/resume /new /stop 用）
+	// CancelAndWait 返回 dirty=true 表示超时未彻底退出（软切换，不阻断上层）。
+	CancelAndWait(ctx context.Context, sessionKey string, timeout time.Duration) (dirty bool, err error)
+
+	// 会话归档标题生成（调一次轻量 LLM）
+	GenerateArchiveTitle(ctx context.Context, agentID string, msgs []models.Message) string
+	HasActiveTask(sessionKey string) bool
+
 	// MCP 相关
 	GetMCPStatus() MCPStatusSnapshot
 	ReconnectMCP(ctx context.Context, target string, onResult func(MCPServerStatus)) []string
@@ -117,6 +126,11 @@ type SessionManagerAccessor interface {
 	Get(key string) (*session.Session, error)
 	GetOrCreate(key string) *session.Session
 	NewSession(key string) *session.Session
+
+	// /resume /new 用：归档当前会话后清空（title 由命令层调 GenerateArchiveTitle 生成）
+	ArchiveAndClear(key, agentID, title string) error
+	// 暴露归档存储（/resume 列表/读取用）
+	ArchiveStore() *session.ArchiveStore
 }
 
 // SessionInfo Session 信息

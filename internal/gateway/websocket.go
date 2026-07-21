@@ -421,6 +421,7 @@ func (g *Gateway) handleWSStream(conn *websocket.Conn, connID string, wsMsg WSMe
 
 	startedAt := time.Now()
 	runID := fmt.Sprintf("%s:%d", connID, startedAt.UnixNano())
+	wDoneCh := make(chan struct{})
 	g.activeTasksMu.Lock()
 	previousTask := g.activeTasks[sessKey]
 	g.activeTasks[sessKey] = &ActiveTask{
@@ -429,6 +430,7 @@ func (g *Gateway) handleWSStream(conn *websocket.Conn, connID string, wsMsg WSMe
 		ConnID:     connID,
 		CancelFunc: cancel,
 		StartedAt:  startedAt,
+		DoneCh:     wDoneCh,
 	}
 	g.activeTasksMu.Unlock()
 	if previousTask != nil {
@@ -453,7 +455,10 @@ func (g *Gateway) handleWSStream(conn *websocket.Conn, connID string, wsMsg WSMe
 		"run_id":           runID,
 	})
 
-	go g.runWSStream(conn, connID, wsMsg, ag, agentID, sessKey, messageContent, media, ctx, cancel, startedAt, runID)
+	go func() {
+		defer close(wDoneCh)
+		g.runWSStream(conn, connID, wsMsg, ag, agentID, sessKey, messageContent, media, ctx, cancel, startedAt, runID)
+	}()
 }
 
 func (g *Gateway) prepareWSStream(conn *websocket.Conn, connID string, wsMsg WSMessage) (*agent.Agent, string, string, string, []models.OutgoingMedia, error) {

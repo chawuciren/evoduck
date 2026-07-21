@@ -6,7 +6,8 @@ var AVAILABLE_COMMANDS = [
     { name: 'status', desc: '显示当前会话状态', usage: '/status', icon: '📊' },
     { name: 'new', desc: '开始新会话，清空历史', usage: '/new', icon: '🆕' },
     { name: 'reset', desc: '重置会话，清空历史 (同 /new)', usage: '/reset', icon: '🔄' },
-    { name: 'history', desc: '显示最近 N 条历史消息', usage: '/history [数量]', icon: '📜' },
+    { name: 'resume', desc: '查看或恢复历史会话', usage: '/resume [next|prev|list <页>|<id>]', icon: '📚' },
+    { name: 'history', desc: '历史会话归档（/resume 的别名）', usage: '/history [next|prev|list <页>|<id>]', icon: '📜' },
     { name: 'model', desc: '显示当前使用的模型', usage: '/model', icon: '🤖' },
     { name: 'models', desc: '显示所有可用模型列表', usage: '/models', icon: '📋', role: 'employee' },
     { name: 'agent', desc: '切换到指定 Agent', usage: '/agent <agent_id>', icon: '🦾' },
@@ -60,7 +61,10 @@ function handleInputKeydown(event) {
             hideCommandDropdown();
             break;
         case 'Enter':
-            // Handled in handleKeyPress
+            if (filteredCommands.length > 0) {
+                event.preventDefault();
+                selectCommand(selectedCommandIndex >= 0 ? selectedCommandIndex : 0);
+            }
             break;
     }
 }
@@ -96,7 +100,9 @@ function showCommandDropdown(commands) {
 
     dropdown.innerHTML = html;
     dropdown.style.display = 'block';
-    selectedCommandIndex = -1;
+    // 默认选中第一项，方便直接回车补全
+    selectedCommandIndex = 0;
+    updateCommandHighlight();
 }
 
 function hideCommandDropdown() {

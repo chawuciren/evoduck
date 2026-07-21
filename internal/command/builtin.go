@@ -18,7 +18,8 @@ func RegisterBuiltinCommands(reg *Registry) {
 	reg.MustRegister(NewStatusCommand())
 	reg.MustRegister(NewNewCommand())
 	reg.MustRegister(NewResetCommand())
-	reg.MustRegister(NewHistoryCommand())
+	reg.MustRegister(NewResumeCommand())
+	reg.MustRegister(NewHistoryAliasCommand()) // /history 别名
 	reg.MustRegister(NewModelCommand())
 	reg.MustRegister(NewAgentCommand())
 	reg.MustRegister(NewAgentsCommand())
@@ -144,9 +145,34 @@ func (c *NewCommand) RequiredRole() models.Role { return RoleAll }
 func (c *NewCommand) Execute(ctx *Context) (*Result, error) {
 	message := "✓ 已开始新会话"
 	if ctx.Session != nil && ctx.Gateway != nil {
+		// 1) 强制停止当前进行中的任务。软切换：超时不阻断（generation 标记会丢弃旧 goroutine 写入）。
+		waitCtx, waitCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		dirty, cancelErr := ctx.Gateway.CancelAndWait(waitCtx, ctx.SessionKey, 8*time.Second)
+		waitCancel()
+		if cancelErr != nil && !dirty {
+			return nil, fmt.Errorf("停止当前任务失败: %w", cancelErr)
+		}
+		if dirty {
+			message = "✓ 已开始新会话（⚠️ 上一轮任务未完全退出，已强制切换）"
+		}
+
+		// 2) 写入长期记忆并清空 session（旧逻辑保留）
 		flushResult, err := ctx.Gateway.FlushSessionMemory(ctx.AgentID, ctx.Session, ctx.Role, ctx.UserID)
 		message = formatSessionResetMessage(message, flushResult, err)
-		ctx.Session.Clear()
+
+		// 3) 归档当前会话消息（不直接销毁，供 /resume 恢复）
+		if sm := ctx.Gateway.GetSessionManager(); sm != nil {
+			titleCtx, titleCancel := context.WithTimeout(context.Background(), archiveTitleTimeout)
+			title := ctx.Gateway.GenerateArchiveTitle(titleCtx, ctx.AgentID, ctx.Session.GetMessages())
+			titleCancel()
+			if archiveErr := sm.ArchiveAndClear(ctx.SessionKey, ctx.AgentID, title); archiveErr != nil {
+				// 归档失败不阻断主流程，仅记录
+				message = message + " (归档失败: " + archiveErr.Error() + ")"
+				ctx.Session.Clear()
+			}
+		} else {
+			ctx.Session.Clear()
+		}
 	} else if ctx.Session != nil {
 		ctx.Session.Clear()
 	}
@@ -823,8 +849,10 @@ type MCPCommand struct{}
 
 func NewMCPCommand() *MCPCommand { return &MCPCommand{} }
 
-func (c *MCPCommand) Name() string        { return "mcp" }
-func (c *MCPCommand) Description() string { return "Show MCP server connection status or reconnect failed servers" }
+func (c *MCPCommand) Name() string { return "mcp" }
+func (c *MCPCommand) Description() string {
+	return "Show MCP server connection status or reconnect failed servers"
+}
 func (c *MCPCommand) Usage() string {
 	return "/mcp [status|reconnect [name]]"
 }

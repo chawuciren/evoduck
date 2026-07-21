@@ -9,10 +9,11 @@ import (
 )
 
 type Manager struct {
-	mu       sync.RWMutex
-	sessions map[string]*Session
-	store    *JSONLStore
-	ttl      time.Duration
+	mu           sync.RWMutex
+	sessions     map[string]*Session
+	store        *JSONLStore
+	archiveStore *ArchiveStore // 会话归档存储（/resume 用）；可为 nil
+	ttl          time.Duration
 }
 
 func NewManager(store *JSONLStore, ttl time.Duration) *Manager {
@@ -24,6 +25,43 @@ func NewManager(store *JSONLStore, ttl time.Duration) *Manager {
 		store:    store,
 		ttl:      ttl,
 	}
+}
+
+// SetArchiveStore 注入归档存储（/resume 功能依赖）
+func (m *Manager) SetArchiveStore(a *ArchiveStore) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.archiveStore = a
+}
+
+// ArchiveStore 暴露归档存储供命令层使用
+func (m *Manager) ArchiveStore() *ArchiveStore {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.archiveStore
+}
+
+// ArchiveAndClear 归档当前 session 的消息（非空时），然后清空。
+// 若 archiveStore 为 nil 或 agentID 为空，退化为直接 Clear（毁灭式，兼容旧行为）。
+// 用于 /new 命令：保存当前对话到归档目录，而非直接丢弃。
+func (m *Manager) ArchiveAndClear(key, agentID, title string) error {
+	m.mu.RLock()
+	a := m.archiveStore
+	m.mu.RUnlock()
+
+	s, err := m.Get(key)
+	if err != nil {
+		return err
+	}
+	msgs := s.GetMessages()
+	if len(msgs) > 0 && a != nil && agentID != "" {
+		s.FixIncompleteToolCalls()
+		if _, err := a.Save(key, agentID, title, s.GetMessages()); err != nil {
+			return fmt.Errorf("archive session: %w", err)
+		}
+	}
+	s.Clear()
+	return nil
 }
 
 func (m *Manager) GetOrCreate(key string) *Session {

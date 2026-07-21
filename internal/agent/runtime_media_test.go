@@ -91,8 +91,8 @@ func TestAppendToolResultMessagePersistsToolMedia(t *testing.T) {
 		t.Fatalf("marshal payload: %v", err)
 	}
 
-	if err := runtime.appendToolResultMessage(sess, models.ToolCall{
-		ID: "tool-call-1",
+	if err := runtime.appendToolResultMessage(context.Background(), sess, models.ToolCall{
+		ID:       "tool-call-1",
 		Function: models.ToolCallFunction{Name: "browser_screenshot"},
 	}, string(payload)); err != nil {
 		t.Fatalf("append tool result message: %v", err)
@@ -159,7 +159,7 @@ func TestAppendToolResultMessageCondensesOversizedContent(t *testing.T) {
 	sess := session.NewSession("webchat:test-user", "tool-condense-session", nil)
 	large := strings.Repeat("abcdef", 40)
 
-	if err := runtime.appendToolResultMessage(sess, models.ToolCall{
+	if err := runtime.appendToolResultMessage(context.Background(), sess, models.ToolCall{
 		ID:       "tool-call-oversized",
 		Function: models.ToolCallFunction{Name: "file_read"},
 	}, large); err != nil {

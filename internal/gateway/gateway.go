@@ -21,8 +21,8 @@ import (
 	"github.com/chawuciren/evoduck/internal/command"
 	cronpkg "github.com/chawuciren/evoduck/internal/cron"
 	"github.com/chawuciren/evoduck/internal/llm"
-	"github.com/chawuciren/evoduck/internal/mediautil"
 	"github.com/chawuciren/evoduck/internal/mcp"
+	"github.com/chawuciren/evoduck/internal/mediautil"
 	"github.com/chawuciren/evoduck/internal/plugin"
 	"github.com/chawuciren/evoduck/internal/profile"
 	"github.com/chawuciren/evoduck/internal/router"
@@ -147,6 +147,52 @@ type ActiveTask struct {
 	ConnID     string
 	CancelFunc context.CancelFunc
 	StartedAt  time.Time
+	DoneCh     chan struct{}
+}
+
+// CancelActiveTask 取消指定 session 的活动任务（如果存在）。返回是否存在活动任务。
+func (g *Gateway) CancelActiveTask(sessionKey string) bool {
+	g.activeTasksMu.Lock()
+	task := g.activeTasks[sessionKey]
+	g.activeTasksMu.Unlock()
+	if task == nil {
+		return false
+	}
+	task.CancelFunc()
+	return true
+}
+
+// CancelAndWait 取消指定 session 的活动任务并等待 stream goroutine 彻底退出。
+// 返回值 dirty=true 表示超时未退出（但调用方不应阻断，应继续执行切换；
+// generation 标记机制会保证旧 goroutine 的后续写入被静默丢弃）。
+// 若无活动任务，立即返回 (false, nil)。
+func (g *Gateway) CancelAndWait(ctx context.Context, sessionKey string, timeout time.Duration) (dirty bool, err error) {
+	g.activeTasksMu.Lock()
+	task := g.activeTasks[sessionKey]
+	g.activeTasksMu.Unlock()
+	if task == nil {
+		return false, nil
+	}
+	task.CancelFunc()
+	select {
+	case <-task.DoneCh:
+		return false, nil
+	case <-time.After(timeout):
+		// 软切换：不阻断，让上层继续 SwapMessages/Clear。
+		// 旧 goroutine 即使继续执行，其 appendMessage 也会因 generation 不匹配而被拒绝。
+		return true, nil
+	case <-ctx.Done():
+		// 外部 ctx 取消（如 /resume 的 waitCtx 超时 = 客户端放弃切换），硬阻断。
+		return false, ctx.Err()
+	}
+}
+
+// HasActiveTask 返回指定 session 是否有进行中的活动任务
+func (g *Gateway) HasActiveTask(sessionKey string) bool {
+	g.activeTasksMu.Lock()
+	_, ok := g.activeTasks[sessionKey]
+	g.activeTasksMu.Unlock()
+	return ok
 }
 
 type schedulerExecutor struct {
@@ -229,6 +275,20 @@ func New(cfg *config.Config, configPath string, llmReg *llm.Registry, agentMgr *
 		proxyDecider:  proxyDecider,
 	}
 	gw.backgroundRuntime = NewBackgroundAgentRuntime(agentMgr, gw.sessionMgr)
+	// 初始化会话归档存储（/resume 功能）；默认启用，除非显式配置 enabled=false
+	archiveEnabled := true
+	if !cfg.SessionArchive.Enabled && (cfg.SessionArchive.MaxPerKey != 0 || cfg.SessionArchive.MaxAgeHours != 0) {
+		archiveEnabled = false
+	}
+	if archiveEnabled {
+		archiveBase := filepath.Join(cfg.DataDir, "sessions.archive")
+		if archiveStore, err := session.NewArchiveStore(archiveBase); err != nil {
+			logger.Warn("Failed to create session archive store, /resume disabled", logger.Fields{"error": err.Error()})
+		} else {
+			gw.sessionMgr.SetArchiveStore(archiveStore)
+			logger.Info("Session archive store initialized", logger.Fields{"base": archiveBase})
+		}
+	}
 	if store, err := mediautil.NewStore(cfg.DataDir); err != nil {
 		logger.Warn("Failed to create media store", logger.Fields{"error": err.Error()})
 	} else {
@@ -363,7 +423,37 @@ func (g *Gateway) handleChannelMessage(msg *models.NormalizedMessage) {
 		return
 	}
 	msg.Media = media
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// 注册活动任务（为 /stop /resume /new 提供取消能力）
+	startedAt := time.Now()
+	runID := fmt.Sprintf("channel:%s:%d", sess.Key, startedAt.UnixNano())
+	doneCh := make(chan struct{})
+	g.activeTasksMu.Lock()
+	previousTask := g.activeTasks[sess.Key]
+	g.activeTasks[sess.Key] = &ActiveTask{
+		RunID:      runID,
+		SessionKey: sess.Key,
+		ConnID:     "",
+		CancelFunc: cancel,
+		StartedAt:  startedAt,
+		DoneCh:     doneCh,
+	}
+	g.activeTasksMu.Unlock()
+	if previousTask != nil {
+		logger.Debug("Superseding previous channel task", logger.Fields{"session_key": sess.Key})
+		previousTask.CancelFunc()
+	}
+	defer func() {
+		close(doneCh)
+		g.activeTasksMu.Lock()
+		if cur, ok := g.activeTasks[sess.Key]; ok && cur.RunID == runID {
+			delete(g.activeTasks, sess.Key)
+		}
+		g.activeTasksMu.Unlock()
+	}()
+
 	streamConfig := models.StreamConfig{MaxIterations: ag.Config.MaxIterations, SendToolEvents: true}
 	stream, err := g.runSessionInputWithMedia(ctx, ag.ID, sess.Key, msg.Content, msg.Media, streamConfig)
 	if err != nil {
@@ -799,12 +889,39 @@ func (g *Gateway) startSessionCleanup() {
 					})
 					g.AddLog("info", fmt.Sprintf("Cleaned up %d expired sessions", count))
 				}
+				// 顺便清理会话归档（按 max_per_key / max_age_hours）
+				g.cleanupSessionArchive()
 			case <-g.cleanupStopCh:
 				logger.Info("Session cleanup task stopped")
 				return
 			}
 		}
 	}()
+}
+
+// cleanupSessionArchive 按配置清理过期的会话归档
+func (g *Gateway) cleanupSessionArchive() {
+	cfg := g.currentConfig()
+	aStore := g.sessionMgr.ArchiveStore()
+	if aStore == nil {
+		return
+	}
+	maxPerKey := cfg.SessionArchive.MaxPerKey
+	if maxPerKey == 0 {
+		maxPerKey = 50
+	}
+	maxAgeHours := cfg.SessionArchive.MaxAgeHours
+	if maxAgeHours == 0 {
+		maxAgeHours = 720 // 30 天
+	}
+	deleted, err := aStore.Cleanup(maxPerKey, maxAgeHours)
+	if err != nil {
+		logger.Warn("Session archive cleanup failed", logger.Fields{"error": err.Error()})
+		return
+	}
+	if deleted > 0 {
+		logger.Info("Session archive cleanup completed", logger.Fields{"deleted": deleted})
+	}
 }
 
 func (g *Gateway) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -1869,6 +1986,157 @@ func (g *Gateway) DeleteSchedule(agentID, userID, id string) error {
 	return g.schedulerService.Delete(id)
 }
 
+// GenerateArchiveTitle 用当前 agent 的 provider 调一次轻量 LLM 生成会话标题。
+// 输入完整会话内容（截断到安全长度），返回 ≤20 字标题。
+// LLM 失败时返回空串。不依赖任何"首条消息提取"逻辑。
+//
+// 实现要点（与 Compactor.generateSummary 同思路，对齐本项目已验证的流式路径）：
+//   - 用流式（ChatStream），不限制 max_tokens。非流式 + max_tokens=60 会让推理模型
+//     （如 GLM-5.2）的 reasoning_content 吃光共享预算，finish_reason=length、content=""
+//     → 标题为空。流式靠 SSE 首字节保活，同时绕过上游 router 对非流式请求的 TTFB/读取超时。
+//   - 最终可见标题仍由 sanitizeArchiveTitle → truncateRunes(_, 20) 截短，长度有兜底。
+func (g *Gateway) GenerateArchiveTitle(ctx context.Context, agentID string, msgs []models.Message) string {
+	// 深拷贝防止 data race（CancelAndWait dirty 路径下旧 goroutine 可能并发写底层数组）
+	msgs = append([]models.Message{}, msgs...)
+	conversation := summarizeConversation(msgs)
+	if strings.TrimSpace(conversation) == "" {
+		return ""
+	}
+
+	var provider llm.Provider
+	if ag, err := g.agentMgr.Get(agentID); err == nil && strings.TrimSpace(ag.Config.Provider) != "" {
+		if p, pErr := g.llmReg.Get(ag.Config.Provider); pErr == nil {
+			provider = p
+		}
+	}
+	// 只用当前 agent 配置的 provider，不回退默认 provider（避免跨厂商计费风险）
+	if provider == nil {
+		return ""
+	}
+
+	modelName := ""
+	if ag, err := g.agentMgr.Get(agentID); err == nil {
+		modelName = ag.Config.Model
+	}
+
+	prompt := "Please generate a concise summary title (max 15 Chinese characters or 8 English words) " +
+		"for the conversation below. The title should capture the core topic or main task of the conversation. " +
+		"Output ONLY the title text, no quotes, no punctuation at the end, no prefixes like 'Title:'. " +
+		"Match the language of the conversation.\n\n" + conversation
+
+	start := time.Now()
+	raw, err := g.streamArchiveTitle(ctx, provider, modelName, []models.Message{
+		{Role: "user", Content: prompt},
+	})
+	if err != nil {
+		logger.Warn("Archive title generation failed", logger.Fields{
+			"agent_id": agentID,
+			"model":    modelName,
+			"elapsed":  time.Since(start).String(),
+			"error":    err.Error(),
+		})
+		return ""
+	}
+
+	title := sanitizeArchiveTitle(raw)
+	logger.Info("Archive title generated", logger.Fields{
+		"agent_id":  agentID,
+		"model":     modelName,
+		"elapsed":   time.Since(start).String(),
+		"raw_chars": len(raw),
+		"title":     title,
+	})
+	return title
+}
+
+// archiveTitleStreamProvider 支持带 options 流式调用的 provider 扩展接口。
+// openai-compatible 已实现 ChatStreamWithOptions；其他 provider 走 ChatStream fallback。
+type archiveTitleStreamProvider interface {
+	ChatStreamWithOptions(ctx context.Context, messages []models.Message, tools []models.ToolDefinition, opts llm.ChatOptions) (<-chan models.StreamEvent, error)
+}
+
+// streamArchiveTitle 用流式调用收集标题文本。
+// 优先用 ChatStreamWithOptions（不修改共享 defaultOptions，并发安全）；
+// 未实现的 provider 退化为 SetDefaultOptions + ChatStream（与 Fusion streamChatCollect 同模式）。
+// 不设 max_tokens：推理模型的 reasoning 与可见输出共享预算，限死会得到空内容。
+func (g *Gateway) streamArchiveTitle(ctx context.Context, provider llm.Provider, modelName string, messages []models.Message) (string, error) {
+	opts := llm.ChatOptions{Model: modelName}
+	var streamCh <-chan models.StreamEvent
+	var err error
+	if swop, ok := provider.(archiveTitleStreamProvider); ok {
+		streamCh, err = swop.ChatStreamWithOptions(ctx, messages, nil, opts)
+	} else {
+		// fallback：非并发安全，仅用于未实现 ChatStreamWithOptions 的 provider
+		provider.SetDefaultOptions(opts)
+		streamCh, err = provider.ChatStream(ctx, messages, nil)
+	}
+	if err != nil {
+		return "", fmt.Errorf("title stream open: %w", err)
+	}
+
+	var sb strings.Builder
+	for event := range streamCh {
+		switch event.Type {
+		case "content":
+			sb.WriteString(event.Content)
+		case "error":
+			if event.Error != nil {
+				return "", event.Error
+			}
+		case "cancelled":
+			return "", ctx.Err()
+		}
+	}
+	return sb.String(), nil
+}
+
+// summarizeConversation 将会话消息拼接为文本，供标题生成 LLM 使用。
+// 跳过 system 消息，截断到约 3000 字防止超 token。
+func summarizeConversation(msgs []models.Message) string {
+	var b strings.Builder
+	for _, m := range msgs {
+		role := strings.TrimSpace(strings.ToLower(m.Role))
+		if role == "system" {
+			continue
+		}
+		content := strings.TrimSpace(m.Content)
+		if content == "" {
+			continue
+		}
+		label := "User"
+		if role == "assistant" {
+			label = "Assistant"
+		}
+		b.WriteString(label + ": " + content + "\n")
+		if b.Len() > 3000 {
+			break
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func truncateRunes(s string, max int) string {
+	r := []rune(s)
+	if len(r) > max {
+		return string(r[:max]) + "..."
+	}
+	return s
+}
+
+func sanitizeArchiveTitle(raw string) string {
+	s := strings.TrimSpace(raw)
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", "")
+	s = strings.ReplaceAll(s, "\t", " ")
+	s = strings.Trim(s, "\"'“”‘’")
+	s = strings.TrimSpace(s)
+	for _, prefix := range []string{"Title:", "title:", "Title\uff1a", "\u6807\u9898\uff1a", "\u6807\u9898:", "Summary:"} {
+		s = strings.TrimPrefix(s, prefix)
+	}
+	s = strings.TrimSpace(s)
+	return truncateRunes(s, 20)
+}
+
 // FlushSessionMemory 在会话清空前提取关键记忆
 func (g *Gateway) FlushSessionMemory(agentID string, sess *session.Session, _ models.Role, userID string) (*command.MemoryFlushResult, error) {
 	result := &command.MemoryFlushResult{}
@@ -2141,4 +2409,12 @@ func (s *sessionManagerAccessor) Get(key string) (*session.Session, error) {
 
 func (s *sessionManagerAccessor) NewSession(key string) *session.Session {
 	return s.mgr.NewSession(key)
+}
+
+func (s *sessionManagerAccessor) ArchiveAndClear(key, agentID, title string) error {
+	return s.mgr.ArchiveAndClear(key, agentID, title)
+}
+
+func (s *sessionManagerAccessor) ArchiveStore() *session.ArchiveStore {
+	return s.mgr.ArchiveStore()
 }

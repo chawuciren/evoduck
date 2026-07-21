@@ -20,6 +20,10 @@ type Session struct {
 	inToolExecution     bool // Tracks whether runtime is processing tool calls
 	pendingToolReplay   *models.Message
 	pendingReplayActive bool
+	// generation 在 SwapMessages / Clear 时自增。stream 入口捕获快照，
+	// 每次 AppendChecked 比较——若不一致说明 session 被切换过，旧 goroutine 的写入应丢弃。
+	// 防止被 cancel 的 subagent / 异步 MCP tool 在 swap 后污染新会话。
+	generation uint64
 }
 
 func NewSession(key, id string, store *JSONLStore) *Session {
@@ -98,6 +102,40 @@ func (s *Session) Append(msg models.Message) {
 	if s.store != nil {
 		s.store.Append(s.Key, msg)
 	}
+}
+
+// Generation 返回当前 generation 快照。stream goroutine 在入口捕获一次，
+// 后续 AppendChecked 时传入该值；若中间发生 SwapMessages/Clear，generation 会自增，
+// 旧 goroutine 的写入会被静默丢弃。
+func (s *Session) Generation() uint64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.generation
+}
+
+// AppendChecked 在指定 generation 下追加消息。
+// 若 generation 已过期（被 SwapMessages/Clear 改过），返回 false 不追加，调用方应停止处理。
+// 与 Append 共享相同的去重 + store 写入逻辑。
+func (s *Session) AppendChecked(msg models.Message, gen uint64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.generation != gen {
+		return false
+	}
+	if msg.Role == "tool" && msg.ToolCallID != "" {
+		for _, existing := range s.msgs {
+			if existing.Role == "tool" && existing.ToolCallID == msg.ToolCallID {
+				return true
+			}
+		}
+	}
+	msg.Timestamp = time.Now()
+	s.msgs = append(s.msgs, msg)
+	s.UpdatedAt = time.Now()
+	if s.store != nil {
+		s.store.Append(s.Key, msg)
+	}
+	return true
 }
 
 func (s *Session) GetMessages() []models.Message {
@@ -205,11 +243,63 @@ func (s *Session) MetadataCopy() map[string]string {
 func (s *Session) Clear() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.generation++ // 使旧 goroutine 的后续 AppendChecked 失败
 	s.msgs = []models.Message{}
 	s.UpdatedAt = time.Now()
 	if s.store != nil {
 		s.store.Replace(s.Key, s.msgs)
 	}
+}
+
+// FixIncompleteToolCalls 修复孤立的 tool_calls：若 assistant 发出了 tool_calls 但后续
+// 没有对应 Role=="tool" 消息（被 cancel 截断），合成 cancel tool message 补全。
+// 必须持有 s.mu 写锁。
+func (s *Session) FixIncompleteToolCalls() {
+	if len(s.msgs) == 0 {
+		return
+	}
+	answered := make(map[string]bool)
+	for _, m := range s.msgs {
+		if strings.EqualFold(m.Role, "tool") && m.ToolCallID != "" {
+			answered[m.ToolCallID] = true
+		}
+	}
+	var newMsgs []models.Message
+	appended := false
+	for _, m := range s.msgs {
+		newMsgs = append(newMsgs, m)
+		if strings.EqualFold(m.Role, "assistant") && len(m.ToolCalls) > 0 {
+			for _, tc := range m.ToolCalls {
+				if tc.ID != "" && !answered[tc.ID] {
+					newMsgs = append(newMsgs, models.Message{
+						Role:       "tool",
+						ToolCallID: tc.ID,
+						Content:    "[cancelled by user before completion]",
+						Timestamp:  time.Now(),
+					})
+					appended = true
+				}
+			}
+		}
+	}
+	if appended {
+		s.msgs = newMsgs
+	}
+}
+
+// SwapMessages 原子替换全部消息（/resume 用），返回旧消息供归档。
+func (s *Session) SwapMessages(newMsgs []models.Message) []models.Message {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.generation++ // 使旧 goroutine 的后续 AppendChecked 失败
+	old := s.msgs
+	s.msgs = make([]models.Message, len(newMsgs))
+	copy(s.msgs, newMsgs)
+	s.UpdatedAt = time.Now()
+	if s.store != nil {
+		s.store.Replace(s.Key, s.msgs)
+	}
+	return old
 }
 
 // SetToolExecution marks the session as being in tool execution mode.

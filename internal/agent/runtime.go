@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -19,6 +20,35 @@ import (
 
 // 模块日志器
 var rtLog = logger.NewModuleLogger("agent")
+
+// generationCtxKey 用于在 ctx 内传递 session generation 快照。
+// stream 入口（Run*/RunStream*）捕获 sess.Generation() 并注入 ctx，
+// 后续所有 appendMessage 调用从 ctx 取出 gen 传给 AppendChecked。
+// 如果中间发生 SwapMessages/Clear，generation 自增，旧 goroutine 的写入被静默丢弃。
+type generationCtxKey struct{}
+
+func contextWithGeneration(ctx context.Context, gen uint64) context.Context {
+	return context.WithValue(ctx, generationCtxKey{}, gen)
+}
+
+func generationFromCtx(ctx context.Context) (uint64, bool) {
+	g, ok := ctx.Value(generationCtxKey{}).(uint64)
+	return g, ok
+}
+
+// ErrSessionStaled 表示 session 已被 SwapMessages/Clear 切换，当前 goroutine 的写入被拒绝。
+// 上层应停止处理并静默退出（不要当作真实错误上报给用户）。
+var ErrSessionStaled = errors.New("session has been swapped/cleared, write rejected")
+
+// appendMessage 在 generation 校验下追加消息。若 session 已切换，写入被静默丢弃。
+// 若 ctx 中没有 generation（旧调用路径），退化为 sess.Append（行为不变）。
+func (r *Runtime) appendMessage(ctx context.Context, sess *session.Session, msg models.Message) {
+	if gen, ok := generationFromCtx(ctx); ok {
+		sess.AppendChecked(msg, gen)
+		return
+	}
+	sess.Append(msg)
+}
 
 func truncateString(s string, maxLen int) string {
 	if len(s) > maxLen {
@@ -134,20 +164,20 @@ func formatMessagesDebug(messages []models.Message) string {
 }
 
 type Runtime struct {
-	llmProvider              llm.Provider
-	toolRegistry             *tools.Registry
-	promptBuilder            *PromptBuilder
-	compactor                *Compactor // 旧的 session 压缩器 (保留兼容)
-	taskPlanner              *TaskPlanner
-	completionChecker        *CompletionChecker
-	pluginManager            *plugin.Manager
-	agentID                  string
-	workspace                string
-	role                     models.Role
-	userIsolation            bool // 是否启用用户隔离
-	mediaStore               *mediautil.Store
-	toolResultCondenseLimit  int
-	imageAutoCompressLimit   int
+	llmProvider             llm.Provider
+	toolRegistry            *tools.Registry
+	promptBuilder           *PromptBuilder
+	compactor               *Compactor // 旧的 session 压缩器 (保留兼容)
+	taskPlanner             *TaskPlanner
+	completionChecker       *CompletionChecker
+	pluginManager           *plugin.Manager
+	agentID                 string
+	workspace               string
+	role                    models.Role
+	userIsolation           bool // 是否启用用户隔离
+	mediaStore              *mediautil.Store
+	toolResultCondenseLimit int
+	imageAutoCompressLimit  int
 }
 
 func NewRuntime(agentID, workspace string, llmProvider llm.Provider, toolRegistry *tools.Registry, promptBuilder *PromptBuilder, role models.Role, compactor *Compactor, userIsolation bool, pluginManager *plugin.Manager) *Runtime {
@@ -440,7 +470,7 @@ func (r *Runtime) condenseToolResultEnvelope(env toolResultEnvelope) toolResultE
 	return env
 }
 
-func (r *Runtime) appendToolResultMessage(sess *session.Session, tc models.ToolCall, result string) error {
+func (r *Runtime) appendToolResultMessage(ctx context.Context, sess *session.Session, tc models.ToolCall, result string) error {
 	env, err := r.normalizeToolResult(tc.Function.Name, result)
 	if err != nil {
 		return err
@@ -452,7 +482,7 @@ func (r *Runtime) appendToolResultMessage(sess *session.Session, tc models.ToolC
 		Media:      append([]models.OutgoingMedia(nil), env.Media...),
 		ToolCallID: tc.ID,
 	}
-	sess.Append(msg)
+	r.appendMessage(ctx, sess, msg)
 	return nil
 }
 
@@ -510,7 +540,7 @@ func (r *Runtime) streamFinalResponse(ctx context.Context, sess *session.Session
 			summaryReasoningMetadata = models.MergeReasoningReplay(summaryReasoningMetadata, event.ReasoningMetadata)
 		case "stop":
 			if summaryContent.Len() > 0 || summaryThinking.Len() > 0 || (summaryReasoningMetadata != nil && summaryReasoningMetadata.HasData()) {
-				sess.Append(models.Message{
+				r.appendMessage(ctx, sess, models.Message{
 					Role:              "assistant",
 					Content:           summaryContent.String(),
 					ThinkingContent:   summaryThinking.String(),
@@ -536,7 +566,7 @@ func (r *Runtime) streamFinalResponse(ctx context.Context, sess *session.Session
 	}
 
 	if summaryContent.Len() > 0 || summaryThinking.Len() > 0 || (summaryReasoningMetadata != nil && summaryReasoningMetadata.HasData()) {
-		sess.Append(models.Message{
+		r.appendMessage(ctx, sess, models.Message{
 			Role:              "assistant",
 			Content:           summaryContent.String(),
 			ThinkingContent:   summaryThinking.String(),
@@ -556,12 +586,14 @@ func (r *Runtime) Run(ctx context.Context, sess *session.Session, userMessage st
 }
 
 func (r *Runtime) RunWithMedia(ctx context.Context, sess *session.Session, userMessage string, media []models.OutgoingMedia) error {
+	// Capture current generation and inject into ctx; all subsequent appendMessage calls will use it to reject stale writes.
+	ctx = contextWithGeneration(ctx, sess.Generation())
 	rtLog.Debug("Processing message", logger.Fields{
 		"agent_id":    r.agentID,
 		"session_key": sess.Key,
 	})
 
-	sess.Append(models.Message{
+	r.appendMessage(ctx, sess, models.Message{
 		Role:    "user",
 		Content: userMessage,
 		Media:   append([]models.OutgoingMedia(nil), media...),
@@ -604,7 +636,7 @@ func (r *Runtime) RunWithMedia(ctx context.Context, sess *session.Session, userM
 	userID := runtimeUserID
 	r.triggerAfterLLMComplete(response, userID)
 	for i := 0; i < maxIterations && len(response.ToolCalls) > 0; i++ {
-		sess.Append(models.Message{
+		r.appendMessage(ctx, sess, models.Message{
 			Role:              "assistant",
 			ThinkingContent:   response.ReasoningContent,
 			ReasoningMetadata: models.CloneReasoningReplay(response.ReasoningMetadata),
@@ -618,7 +650,7 @@ func (r *Runtime) RunWithMedia(ctx context.Context, sess *session.Session, userM
 				result = fmt.Sprintf("Error: %v", err)
 			}
 
-			if err := r.appendToolResultMessage(sess, tc, result); err != nil {
+			if err := r.appendToolResultMessage(ctx, sess, tc, result); err != nil {
 				return fmt.Errorf("append tool result: %w", err)
 			}
 			if err := r.compactIfNeeded(ctx, sess); err != nil {
@@ -649,7 +681,7 @@ func (r *Runtime) RunWithMedia(ctx context.Context, sess *session.Session, userM
 	}
 
 	if response.Content != "" || response.ReasoningContent != "" || (response.ReasoningMetadata != nil && response.ReasoningMetadata.HasData()) {
-		sess.Append(models.Message{
+		r.appendMessage(ctx, sess, models.Message{
 			Role:              "assistant",
 			Content:           response.Content,
 			ThinkingContent:   response.ReasoningContent,
@@ -687,6 +719,8 @@ func (r *Runtime) RunStreamWithLoop(ctx context.Context, sess *session.Session, 
 }
 
 func (r *Runtime) RunStreamWithLoopWithMedia(ctx context.Context, sess *session.Session, userMessage string, media []models.OutgoingMedia, config models.StreamConfig) (<-chan models.StreamEvent, error) {
+	// Capture current generation and inject into ctx; all subsequent appendMessage calls will use it to reject stale writes.
+	ctx = contextWithGeneration(ctx, sess.Generation())
 	// 设置默认配置
 	if config.MaxIterations <= 0 {
 		config.MaxIterations = 100
@@ -706,7 +740,7 @@ func (r *Runtime) RunStreamWithLoopWithMedia(ctx context.Context, sess *session.
 		defer close(outputCh)
 
 		// 1. 添加用户消息
-		sess.Append(models.Message{
+		r.appendMessage(ctx, sess, models.Message{
 			Role:    "user",
 			Content: userMessage,
 			Media:   append([]models.OutgoingMedia(nil), media...),
@@ -756,7 +790,7 @@ func (r *Runtime) RunStreamWithLoopWithMedia(ctx context.Context, sess *session.
 			reminderNeeded := shouldInjectTaskPlanReminderAtLoopStart(currentPlan, iteration, taskPlanReminderLevel)
 			if reminderNeeded > taskPlanReminderLevel {
 				reminder := buildTaskPlanReminderByLevel(reminderNeeded, iteration, usedToolNamesInIteration)
-				sess.Append(reminder)
+				r.appendMessage(ctx, sess, reminder)
 				taskPlanReminderLevel = reminderNeeded
 				rtLog.Info("Injected task_plan reminder at loop start", logger.Fields{
 					"iteration":      iteration,
@@ -911,7 +945,7 @@ func (r *Runtime) RunStreamWithLoopWithMedia(ctx context.Context, sess *session.
 			if len(toolCalls) == 0 {
 				// 无工具调用，保存 assistant 消息并结束
 				if assistantContent.Len() > 0 || assistantThinking.Len() > 0 || (assistantReasoningMetadata != nil && assistantReasoningMetadata.HasData()) {
-					sess.Append(models.Message{
+					r.appendMessage(ctx, sess, models.Message{
 						Role:              "assistant",
 						Content:           assistantContent.String(),
 						ThinkingContent:   assistantThinking.String(),
@@ -945,7 +979,7 @@ func (r *Runtime) RunStreamWithLoopWithMedia(ctx context.Context, sess *session.
 			successfulIDs := make(map[string]bool)
 
 			// 将同一轮的全部 tool calls 作为一个 assistant 消息落盘，保持请求配对关系。
-			sess.Append(models.Message{
+			r.appendMessage(ctx, sess, models.Message{
 				Role:              "assistant",
 				Content:           assistantContent.String(),
 				ThinkingContent:   assistantThinking.String(),
@@ -1039,7 +1073,7 @@ func (r *Runtime) RunStreamWithLoopWithMedia(ctx context.Context, sess *session.
 					}
 				}
 
-				if err := r.appendToolResultMessage(sess, tc, result); err != nil {
+				if err := r.appendToolResultMessage(ctx, sess, tc, result); err != nil {
 					outputCh <- models.StreamEvent{
 						Type:      "error",
 						Error:     fmt.Errorf("append tool result: %w", err),
@@ -1586,4 +1620,3 @@ func estimateSessionLayers(sess *session.Session) []LayerStats {
 	}
 	return layers
 }
-

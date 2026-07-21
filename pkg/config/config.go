@@ -25,10 +25,18 @@ type Config struct {
 	Logging                 LoggingConfig          `yaml:"logging"` // 日志配置
 	Proxy                   ProxyConfig            `yaml:"proxy"`   // 代理配置
 	Daemon                  DaemonConfig           `yaml:"daemon"`  // Daemon 配置
+	SessionArchive          SessionArchiveConfig    `yaml:"session_archive"` // 会话归档配置（/resume）
 	Fusion                  FusionConfig           `yaml:"fusion"`  // Fusion 圆桌会诊配置
 }
 
 // DaemonConfig daemon 进程配置
+// SessionArchiveConfig 会话归档配置（/resume 功能）
+type SessionArchiveConfig struct {
+	Enabled     bool `yaml:"enabled"`       // 是否启用会话归档（默认关闭）
+	MaxPerKey   int  `yaml:"max_per_key"`   // 每个 key 保留的归档数量上限（默认 50）
+	MaxAgeHours int  `yaml:"max_age_hours"` // 归档最大保留时长（小时，默认 720 即 30 天）
+}
+
 type DaemonConfig struct {
 	ControlPort int `yaml:"control_port"` // daemon 控制端口 (默认: gateway port + 2)
 }
