@@ -159,11 +159,13 @@
                     <div class="chat-input-row">
                         <button id="cmdBtn" class="terminal-icon-btn" onclick="toggleCommandDropdown()" title="Commands">/</button>
                         <button id="mediaUploadBtn" class="terminal-icon-btn" type="button" onclick="openMediaPicker()" title="Upload image">+</button>
+                        <button id="micBtn" class="terminal-icon-btn" type="button" onclick="toggleASR()" title="语音输入">🎤</button>
                         <div class="chat-input-shell">
                             <input type="file" id="mediaFileInput" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
                             <input type="text" id="messageInput" placeholder="Type a message... (use / for commands)" onkeypress="handleKeyPress(event)" oninput="handleInputChange(event)" onkeydown="handleInputKeydown(event)" autocomplete="off">
                             <div id="commandDropdown" class="command-dropdown" style="display: none;"></div>
                         </div>
+                        <button id="ttsBtn" class="terminal-icon-btn" type="button" onclick="toggleTTS()" title="语音播报">🔇</button>
                         <button id="sendBtn" onclick="sendMessage()" disabled>Send</button>
                     </div>
                 </div>
@@ -435,6 +437,7 @@
     <script src="js/settings-page.js?v=20260425b"></script>
     <script src="js/logs-page.js?v=20260425b"></script>
     <script src="js/chat.js?v=20260425b"></script>
+    <script src="js/voice.js?v=20260724a"></script>
     <script src="js/commands.js?v=20260425b"></script>
     <script src="js/duck-frames.js?v=20260509b"></script>
     <script src="js/duck.js?v=20260509b"></script>

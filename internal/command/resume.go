@@ -118,6 +118,10 @@ func (c *ResumeCommand) doRestore(ctx *Context, store *session.ArchiveStore, idH
 	}
 	picked := list[target]
 
+	// 立即向前端反馈"恢复中"——后续归档标题生成 / CancelAndWait / 加载归档可能耗时数秒。
+	// 走 SendCommandMessage 直连，不等 Execute 返回，真正做到"命令一进来就秒发"。
+	ctx.Gateway.SendCommandMessage(ctx, fmt.Sprintf("⏳ Restoring session #%d…", target+1))
+
 	// 1) 先把当前会话也归档（避免覆盖丢失当前对话）
 	curMsgs := ctx.Session.GetMessages()
 	if len(curMsgs) > 0 {
@@ -164,11 +168,15 @@ func (c *ResumeCommand) doRestore(ctx *Context, store *session.ArchiveStore, idH
 		title,
 	)
 
-	return NewResultWithAction(msg, "resume_session", map[string]any{
-		"session_key":   ctx.SessionKey,
-		"archive_id":    picked.Meta.ID,
-		"message_count": len(newMsgs),
-	}), nil
+	return &Result{
+		Content:    msg,
+		ActionType: "resume_session",
+		ActionData: map[string]any{
+			"session_key":   ctx.SessionKey,
+			"archive_id":    picked.Meta.ID,
+			"message_count": len(newMsgs),
+		},
+	}, nil
 }
 
 // renderList 渲染归档列表（分页）。输出为 Markdown：标题 + 有序列表（loose list）+

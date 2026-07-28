@@ -144,6 +144,12 @@ func (c *NewCommand) RequiredRole() models.Role { return RoleAll }
 
 func (c *NewCommand) Execute(ctx *Context) (*Result, error) {
 	message := "✓ 已开始新会话"
+
+	// 立即反馈前端：正在归档+摘要当前会话（耗时操作开始前就下发）
+	if ctx.Session != nil && ctx.Gateway != nil && len(ctx.Session.GetMessages()) > 0 {
+		ctx.Gateway.SendCommandMessage(ctx, "⏳ Summarizing current conversation…")
+	}
+
 	if ctx.Session != nil && ctx.Gateway != nil {
 		// 1) 强制停止当前进行中的任务。软切换：超时不阻断（generation 标记会丢弃旧 goroutine 写入）。
 		waitCtx, waitCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -177,9 +183,14 @@ func (c *NewCommand) Execute(ctx *Context) (*Result, error) {
 		ctx.Session.Clear()
 	}
 
-	return NewResultWithAction(message, "new_session", map[string]any{
-		"session_key": ctx.SessionKey,
-	}), nil
+	return &Result{
+		Content:    message,
+		ActionType: "new_session",
+		ActionData: map[string]any{
+			"session_key": ctx.SessionKey,
+		},
+		EndMessage: "✓ Started new session",
+	}, nil
 }
 
 // ============================================================================

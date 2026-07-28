@@ -172,7 +172,8 @@ function handleCommandAction(action, data) {
             clearPendingMedia();
     updateComposerVisionState();
     updateSendButton();
-            addSystemMessage('✓ Started new session');
+            // 不在此处补 addSystemMessage —— 后端会通过 EndMessage 下发结束提示，
+            // 避免与后端消息重复。
             addLog('info', 'New session started');
             break;
         case 'switch_agent':
@@ -194,6 +195,18 @@ function handleCommandAction(action, data) {
                 fetchDiagnostics();
                 addLog('info', 'Switched to agent: ' + data.agent_id);
             }
+            break;
+        case 'resume_session':
+            // 恢复后当前会话已是归档消息，重新拉取历史刷新 UI（与 /new 一致的本地状态清理）。
+            document.getElementById('chatMessages').innerHTML = '';
+            updateChatScrollButton();
+            currentStreamMessage = null;
+            isAgentRunning = false;
+            clearPendingMedia();
+    updateComposerVisionState();
+    updateSendButton();
+            requestAgentHistory(getSessionKey());
+            addLog('info', 'Resumed session: ' + (data.archive_id || ''));
             break;
         case 'clear_ui':
             document.getElementById('chatMessages').innerHTML = '';

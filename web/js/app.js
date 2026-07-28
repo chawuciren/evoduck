@@ -88,6 +88,7 @@ document.addEventListener('DOMContentLoaded', function() {
     renderPendingMediaTray();
     updateComposerVisionState();
     updateSidebarVersion();
+    voiceInit();
 
     initDuckAnimation();
     initThemeControls();
@@ -537,6 +538,7 @@ function handleMessage(data) {
             runningSessionKey = '';
             updateSendButton();
             showFinalResponse();
+            speakReplyFromStream();
             finalizeStreamMessage();
             finalizeThinking();
             fetchContextStats(); // 问答完成后立即更新上下文统计
@@ -856,6 +858,9 @@ function handleMessage(data) {
 function sendComposerMessage(messageOverride) {
     var input = document.getElementById('messageInput');
     if (!input) return;
+
+    // 用户发送新消息时，打断上一条回复的语音朗读
+    if (typeof stopSpeaking === 'function') stopSpeaking();
 
     var message = typeof messageOverride === 'string' ? messageOverride.trim() : input.value.trim();
     var uploadedMedia = getUploadedComposerMedia();

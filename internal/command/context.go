@@ -74,6 +74,10 @@ type GatewayAccessor interface {
 	// CancelAndWait 返回 dirty=true 表示超时未彻底退出（软切换，不阻断上层）。
 	CancelAndWait(ctx context.Context, sessionKey string, timeout time.Duration) (dirty bool, err error)
 
+	// SendCommandMessage 立即向发起命令的连接下发一条 command 提示消息（Markdown）。
+	// 供耗时命令（/new /resume <id>）在重活开始前/结束后即时反馈，不等 Execute 返回。
+	SendCommandMessage(ctx *Context, content string)
+
 	// 会话归档标题生成（调一次轻量 LLM）
 	GenerateArchiveTitle(ctx context.Context, agentID string, msgs []models.Message) string
 	HasActiveTask(sessionKey string) bool
@@ -263,6 +267,20 @@ type Result struct {
 	ActionType string         // 可选后续动作: "new_session", "switch_agent", "clear_ui"
 	ActionData map[string]any // 动作参数
 	Error      error          // 错误信息 (如果有)
+
+	// PreMessage 在主结果 Content 之前立即下发的提示消息（Markdown）。
+	// 适用于耗时命令（如 /resume <id>）：Execute 内部在重活开始前无法返回，
+	// 故先把"恢复中..."作为独立 command 消息下发，主结果完成后再发"恢复成功"。
+	//
+	// 注意：PreMessage 仍是"先发后返"——在 sendWSCommandResult 中于 Execute 返回后
+	// 才下发。若需要在 Execute 内部、重活进行中即时下发（如 /new），应改用
+	// Gateway.SendCommandMessage(ctx, ...) 直接写连接。
+	PreMessage string
+
+	// EndMessage 在主结果 Content 之后下发的结束消息（Markdown）。
+	// 与 PreMessage 类似由 sendWSCommandResult 统一下发（Content → EndMessage 顺序）。
+	// 典型用途：/new 在会话清空（前端 action 已执行）后再补一条"已开始新会话"。
+	EndMessage string
 
 	// FollowUps 可选的异步后续消息通道（每条 string 作为一条独立消息反馈给前端）。
 	// 由命令执行后、主结果返回后异步产生；通道关闭表示后续消息发送完毕。

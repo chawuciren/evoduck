@@ -77,7 +77,7 @@ function createStreamMessage() {
     messageDiv.id = 'stream-message-' + Date.now();
     messageDiv.style.display = 'none';
     messageDiv.innerHTML = '<div class="message-content">'
-        + '<span class="stream-content"></span>'
+        + '<span class="stream-content"></span>'        + buildMessageActionsHTML('assistant')
         + '<div class="message-time">' + new Date().toLocaleTimeString() + '</div>'
         + '</div>';
 
@@ -438,6 +438,75 @@ function renderPendingComposerMedia(media) {
     }).filter(Boolean).join('');
 }
 
+// ---- Message Action Buttons ----
+function buildMessageActionsHTML(role) {
+    var html = '<div class="message-actions">';
+    if (role === 'assistant') {
+        html += '<button class="msg-action-btn" type="button" onclick="speakMessage(this)" title="播报">🔊</button>';
+    }
+    html += '<button class="msg-action-btn" type="button" onclick="copyMessage(this)" title="复制">📋</button>';
+    html += '</div>';
+    return html;
+}
+
+// 提取消息纯文本（去掉时间、按钮等非内容元素）
+function getMessageText(contentEl) {
+    var clone = contentEl.cloneNode(true);
+    var discard = clone.querySelectorAll('.message-time, .message-actions, .thinking-card');
+    for (var i = 0; i < discard.length; i++) discard[i].remove();
+    return clone.innerText || clone.textContent || '';
+}
+
+function speakMessage(btn) {
+    if (!window.speechSynthesis) {
+        addSystemMessage('🔊 当前浏览器不支持语音播报');
+        return;
+    }
+    var contentEl = btn.closest('.message-content');
+    if (!contentEl) return;
+    var text = getMessageText(contentEl);
+    if (!text.trim()) return;
+    if (typeof speakOnDemand === 'function') {
+        speakOnDemand(text);
+    } else {
+        stopSpeaking();
+        speakText(text, true);
+    }
+}
+
+function copyMessage(btn) {
+    var contentEl = btn.closest('.message-content');
+    if (!contentEl) return;
+    var text = getMessageText(contentEl);
+    if (!text.trim()) return;
+
+    function onSuccess() {
+        var orig = btn.textContent;
+        btn.textContent = '✅';
+        setTimeout(function() { btn.textContent = orig; }, 1200);
+    }
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(onSuccess, function() {
+            fallbackCopy(text, onSuccess);
+        });
+    } else {
+        fallbackCopy(text, onSuccess);
+    }
+}
+
+function fallbackCopy(text, done) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(ta);
+    if (done) done();
+}
+
 function addMessage(role, content, timestamp, media) {
     var container = getChatMessagesContainer();
     var shouldStickToBottom = isChatNearBottom();
@@ -450,6 +519,7 @@ function addMessage(role, content, timestamp, media) {
     messageDiv.innerHTML = '<div class="message-content">'
         + renderedContent
         + mediaHtml
+        + buildMessageActionsHTML(role)
         + '<div class="message-time">' + time + '</div></div>';
     container.appendChild(messageDiv);
     syncChatScrollAfterAppend(shouldStickToBottom);

@@ -843,6 +843,17 @@ func (g *Gateway) sendWSErrorWithFields(conn *websocket.Conn, errMsg string, fie
 
 // sendWSCommandResult 发送斜杆命令结果
 func (g *Gateway) sendWSCommandResult(conn *websocket.Conn, result *command.Result) {
+	// 先发"进行中"提示消息（用于 /resume <id> 等耗时命令立即反馈前端）
+	if strings.TrimSpace(result.PreMessage) != "" {
+		preResp := map[string]interface{}{
+			"type":    "command",
+			"content": result.PreMessage,
+			"done":    true,
+		}
+		pd, _ := json.Marshal(preResp)
+		g.writeWSJSON(conn, pd, logger.Fields{"response_type": "command_pre"})
+	}
+
 	resp := map[string]interface{}{
 		"type":    "command",
 		"content": result.Content,
@@ -856,6 +867,17 @@ func (g *Gateway) sendWSCommandResult(conn *websocket.Conn, result *command.Resu
 	}
 	data, _ := json.Marshal(resp)
 	g.writeWSJSON(conn, data, logger.Fields{"response_type": "command"})
+
+	// 结束消息：在主结果之后下发（用于 /new 在会话清空后补一条"已开始新会话"）。
+	if strings.TrimSpace(result.EndMessage) != "" {
+		endResp := map[string]interface{}{
+			"type":    "command",
+			"content": result.EndMessage,
+			"done":    true,
+		}
+		ed, _ := json.Marshal(endResp)
+		g.writeWSJSON(conn, ed, logger.Fields{"response_type": "command_end"})
+	}
 
 	// 异步后续消息：命令（如 /mcp reconnect）可能产生多条独立结果。
 	// 主结果发送后，逐条读取 FollowUps 通道并作为独立 command 消息下发。
@@ -872,6 +894,25 @@ func (g *Gateway) sendWSCommandResult(conn *websocket.Conn, result *command.Resu
 			}
 		}(result.FollowUps)
 	}
+}
+
+// SendCommandMessage 立即向发起命令的连接下发一条 command 提示消息（Markdown）。
+// 供耗时命令（/new /resume <id>）在重活开始前/结束后即时反馈，不等 Execute 返回。
+// 实现 command.GatewayAccessor 接口。
+func (g *Gateway) SendCommandMessage(ctx *command.Context, content string) {
+	if ctx == nil || ctx.Conn == nil {
+		return
+	}
+	if strings.TrimSpace(content) == "" {
+		return
+	}
+	resp := map[string]interface{}{
+		"type":    "command",
+		"content": content,
+		"done":    true,
+	}
+	data, _ := json.Marshal(resp)
+	g.writeWSJSON(ctx.Conn, data, logger.Fields{"response_type": "command_instant"})
 }
 
 func (g *Gateway) sendWSPong(conn *websocket.Conn) {
