@@ -83,6 +83,11 @@ func (c *Compactor) SetNotifier(notifier CompactionNotifier) {
 	c.notifier = notifier
 }
 
+// SetLLMProvider 热替换压缩器使用的 LLM provider（配置变更时同步更新）
+func (c *Compactor) SetLLMProvider(p llm.Provider) {
+	c.llmProvider = p
+}
+
 // ShouldCompact 判断是否需要压缩
 func (c *Compactor) ShouldCompact(sess *session.Session) bool {
 	return c.compactionNeed(sess).Needed

@@ -767,6 +767,53 @@ func (m *Manager) reloadConfig(ctx context.Context) (string, error) {
 	return reloader(ctx)
 }
 
+// RefreshAgentProviders 在 LLM 配置变更后，为所有已注册 agent 重新解析并热替换 provider。
+// 正在进行的流式请求持有旧 provider 引用，不受影响；后续新请求使用新 provider。
+func (m *Manager) RefreshAgentProviders() error {
+	m.mu.RLock()
+	agents := make([]*Agent, 0, len(m.agents))
+	for _, ag := range m.agents {
+		agents = append(agents, ag)
+	}
+	m.mu.RUnlock()
+
+	for _, ag := range agents {
+		providerName, modelName, err := m.llmReg.ResolveProviderModel(ag.Config.Provider, ag.Config.Model)
+		if err != nil {
+			return fmt.Errorf("resolve LLM for agent %s: %w", ag.ID, err)
+		}
+
+		provider, err := m.llmReg.Get(providerName)
+		if err != nil {
+			return fmt.Errorf("load LLM provider for agent %s: %w", ag.ID, err)
+		}
+
+		// 重新应用 agent 级别的 LLM 选项
+		provider.SetDefaultOptions(llm.ChatOptions{
+			Model:       modelName,
+			Temperature: ag.Config.Temperature,
+			MaxTokens:   ag.Config.MaxTokens,
+			TopP:        ag.Config.TopP,
+		})
+
+		// 热替换 Runtime、Compactor、PromptBuilder 中的 provider 引用
+		ag.Runtime.SetLLMProvider(provider)
+		if ag.Runtime.compactor != nil {
+			ag.Runtime.compactor.SetLLMProvider(provider)
+		}
+		if ag.Runtime.promptBuilder != nil {
+			ag.Runtime.promptBuilder.SetLLMProvider(provider)
+		}
+
+		logger.Info("Agent LLM provider refreshed", logger.Fields{
+			"agent_id": ag.ID,
+			"provider": providerName,
+			"model":    modelName,
+		})
+	}
+	return nil
+}
+
 func (m *Manager) GetMCPManager() *mcp.Manager {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

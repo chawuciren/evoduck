@@ -200,6 +200,12 @@ func (r *Runtime) SetMediaStore(store *mediautil.Store) {
 	r.mediaStore = store
 }
 
+// SetLLMProvider 热替换 LLM provider（配置变更时由 Manager.RefreshAgentProviders 调用）。
+// 正在进行的流式请求持有旧 provider 引用，不受影响，可正常完成。
+func (r *Runtime) SetLLMProvider(p llm.Provider) {
+	r.llmProvider = p
+}
+
 func (r *Runtime) SetToolResultCondenseLimit(limit int) {
 	r.toolResultCondenseLimit = limit
 }
