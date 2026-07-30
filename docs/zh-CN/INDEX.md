@@ -1,4 +1,4 @@
-﻿# EvoDuck 文档索引
+# EvoDuck 文档索引
 
 [English](../INDEX.md) | [简体中文](INDEX.md)
 
@@ -28,6 +28,13 @@
 | [工具系统](guides/tools.md) | 当前工具来源、常见内置工具、MCP 与插件工具 |
 | [Memory 与 Knowledge 路由](guides/memory-knowledge-routing.md) | Memory、knowledge 和 file 工具职责边界 |
 | [Weixin 渠道细节](guides/weixin-channel.md) | `weixin` 与 `wecom` 的具体差异 |
+
+## 架构分析
+
+| 文档 | 作用 |
+| --- | --- |
+| [项目结构分析](guides/project-structure.md) | 完整目录结构、模块职责、依赖关系与架构设计 |
+| [知识库系统架构](guides/knowledge-system-architecture.md) | 知识库子系统三层架构、存储格式、工具层、Agent 集成与设计决策 |
 
 ## 说明
 
