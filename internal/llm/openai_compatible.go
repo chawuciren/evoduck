@@ -526,10 +526,40 @@ func (p *OpenAICompatibleProvider) convertMessagesWithReasoningPolicy(messages [
 		}
 		result = append(result, msg)
 	}
+	result = normalizeCompatibleSystemMessages(result)
 	if len(result) == 0 {
 		result = append(result, openAIChatMessage{Role: "user", Content: " "})
 	}
 	return result, nil
+}
+
+// normalizeCompatibleSystemMessages 将 system 角色收敛为开头至多一条消息：
+// 多条前导 system 合并，中途出现的 system（典型来源：runtime 注入的 developer
+// 角色提醒，经 normalizeCompatibleRole 映射为 system）上提合并到开头。
+// Ollama 等上游的 OpenAI 兼容端点要求 system message 必须位于 messages 最前
+// （"system message must be at the beginning"，经 new-api 等中转表现为 500），
+// 智谱 GLM 等也要求 system 仅一条；与 anthropic_compatible 的 system 上提策略保持一致。
+func normalizeCompatibleSystemMessages(messages []openAIChatMessage) []openAIChatMessage {
+	if len(messages) == 0 {
+		return messages
+	}
+
+	var systemTexts []string
+	rest := make([]openAIChatMessage, 0, len(messages))
+	for _, msg := range messages {
+		if msg.Role != "system" {
+			rest = append(rest, msg)
+			continue
+		}
+		if text, ok := msg.Content.(string); ok && strings.TrimSpace(text) != "" {
+			systemTexts = append(systemTexts, text)
+		}
+	}
+	if len(systemTexts) == 0 {
+		return rest
+	}
+	merged := openAIChatMessage{Role: "system", Content: strings.Join(systemTexts, "\n\n")}
+	return append([]openAIChatMessage{merged}, rest...)
 }
 
 func shouldIncludeCompatibleReasoning(msg models.Message, policy reasoningReplayPolicy) bool {

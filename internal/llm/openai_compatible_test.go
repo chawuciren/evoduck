@@ -20,6 +20,72 @@ func TestNormalizeCompatibleRoleMapsDeveloperToSystem(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatibleConvertMovesMidStreamSystemToFront(t *testing.T) {
+	provider, err := NewOpenAICompatibleProvider("test", config.ProviderConfig{
+		Type:         "openai-compatible",
+		BaseURL:      "https://example.com",
+		DefaultModel: "test-model",
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewOpenAICompatibleProvider() error = %v", err)
+	}
+
+	// developer 角色提醒出现在对话中途，经 normalizeCompatibleRole 变为 system，
+	// 若不上提会触发 Ollama "system message must be at the beginning" 500 错误。
+	converted, err := provider.(*OpenAICompatibleProvider).convertMessages([]models.Message{
+		{Role: "system", Content: "base prompt"},
+		{Role: "user", Content: "hello"},
+		{Role: "developer", Content: "[Task Planning Suggestion] consider task_plan"},
+		{Role: "assistant", Content: "ok"},
+	})
+	if err != nil {
+		t.Fatalf("convertMessages() error = %v", err)
+	}
+	if len(converted) != 3 {
+		t.Fatalf("expected 3 messages after merge, got %d: %+v", len(converted), converted)
+	}
+	if converted[0].Role != "system" {
+		t.Fatalf("expected first message to be system, got %q", converted[0].Role)
+	}
+	if text, _ := converted[0].Content.(string); !strings.Contains(text, "base prompt") || !strings.Contains(text, "Task Planning Suggestion") {
+		t.Fatalf("expected merged system content, got %q", text)
+	}
+	for _, msg := range converted[1:] {
+		if msg.Role == "system" {
+			t.Fatalf("expected no mid-stream system messages, got %+v", converted)
+		}
+	}
+}
+
+func TestOpenAICompatibleConvertWithoutLeadingSystemKeepsInsertionOrder(t *testing.T) {
+	provider, err := NewOpenAICompatibleProvider("test", config.ProviderConfig{
+		Type:         "openai-compatible",
+		BaseURL:      "https://example.com",
+		DefaultModel: "test-model",
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewOpenAICompatibleProvider() error = %v", err)
+	}
+
+	converted, err := provider.(*OpenAICompatibleProvider).convertMessages([]models.Message{
+		{Role: "user", Content: "hello"},
+		{Role: "developer", Content: "reminder"},
+		{Role: "assistant", Content: "ok"},
+	})
+	if err != nil {
+		t.Fatalf("convertMessages() error = %v", err)
+	}
+	if len(converted) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(converted))
+	}
+	if converted[0].Role != "system" {
+		t.Fatalf("expected system at front, got %q", converted[0].Role)
+	}
+	if converted[1].Role != "user" || converted[2].Role != "assistant" {
+		t.Fatalf("expected user then assistant after system, got %+v", converted)
+	}
+}
+
 func TestOpenAICompatibleChatStreamRetriesTransientStatus(t *testing.T) {
 	attempts := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
