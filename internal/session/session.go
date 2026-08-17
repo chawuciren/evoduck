@@ -87,13 +87,8 @@ func (s *Session) Append(msg models.Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// ToolCallID 去重：跳过已存在的 tool 消息
-	if msg.Role == "tool" && msg.ToolCallID != "" {
-		for _, existing := range s.msgs {
-			if existing.Role == "tool" && existing.ToolCallID == msg.ToolCallID {
-				return
-			}
-		}
+	if s.shouldDropDuplicateToolResult(msg) {
+		return
 	}
 
 	msg.Timestamp = time.Now()
@@ -122,12 +117,8 @@ func (s *Session) AppendChecked(msg models.Message, gen uint64) bool {
 	if s.generation != gen {
 		return false
 	}
-	if msg.Role == "tool" && msg.ToolCallID != "" {
-		for _, existing := range s.msgs {
-			if existing.Role == "tool" && existing.ToolCallID == msg.ToolCallID {
-				return true
-			}
-		}
+	if s.shouldDropDuplicateToolResult(msg) {
+		return true
 	}
 	msg.Timestamp = time.Now()
 	s.msgs = append(s.msgs, msg)
@@ -136,6 +127,57 @@ func (s *Session) AppendChecked(msg models.Message, gen uint64) bool {
 		s.store.Append(s.Key, msg)
 	}
 	return true
+}
+
+// shouldDropDuplicateToolResult 判断 tool 消息是否为重复回放。
+// 必须持有 s.mu。
+//
+// 仅当存在「未应答的 assistant tool_call」之前已有同 id 的完整
+// assistant→tool 配对时才视为重放：即倒序找到离本条最近的一条同 id tool
+// result，且它之前存在带该 tool_call 的 assistant（正常配对链），同时
+// 本条对应的新 assistant 批次也已落盘——两条 assistant 都持有该 id。
+//
+// 背景：qwen/ollama 流式返回的 tool_call id 每轮从 call_0 重新编号，早期按
+// ToolCallID 全局去重会把新一轮同 id 的 tool result 静默丢弃，导致 assistant
+// 挂着永远没有结果的 tool_calls，上游 sanitize 再把 tool_calls 清空，上下文
+// 逐步畸形（详见 2026-08-18 no user query 排查）。
+// 区分「重放」与「新一轮同 id」的可靠信号是：新一轮在 tool result 之前必然
+// 新写入了一条持有该 tool_call 的 assistant 消息。因此只在【最近的同 id
+// result 之前，恰好有且仅有最近的 assistant 批次等待应答，且更早的配对链
+// 完整】时丢弃——简化实现：倒序扫到最近一条同 id tool result 后，继续向前
+// 若先遇到带该 id 的 assistant（配对完整），且其后（即更晚）又没有其他
+// 持有该 id 且未应答的 assistant，则为重放。
+// 由于消息按时间追加，等价判定：最后一条持有该 tool_call 的 assistant
+// 之后已存在同 id 的 tool result → 本条是重放；否则是新批次的 result。
+func (s *Session) shouldDropDuplicateToolResult(msg models.Message) bool {
+	if msg.Role != "tool" || strings.TrimSpace(msg.ToolCallID) == "" {
+		return false
+	}
+	// 倒序找最后一条持有该 tool_call 的 assistant
+	for i := len(s.msgs) - 1; i >= 0; i-- {
+		existing := s.msgs[i]
+		if existing.Role != "assistant" {
+			continue
+		}
+		owns := false
+		for _, tc := range existing.ToolCalls {
+			if tc.ID == msg.ToolCallID {
+				owns = true
+				break
+			}
+		}
+		if !owns {
+			continue
+		}
+		// 该 assistant 之后是否已有同 id 的 tool result？
+		for j := i + 1; j < len(s.msgs); j++ {
+			if s.msgs[j].Role == "tool" && s.msgs[j].ToolCallID == msg.ToolCallID {
+				return true // 最后持有者已被应答 → 重放
+			}
+		}
+		return false // 最后持有者尚未应答 → 新一轮 result
+	}
+	return false
 }
 
 func (s *Session) GetMessages() []models.Message {
