@@ -527,10 +527,29 @@ func (p *OpenAICompatibleProvider) convertMessagesWithReasoningPolicy(messages [
 		result = append(result, msg)
 	}
 	result = normalizeCompatibleSystemMessages(result)
+	result = ensureCompatibleUserMessage(result)
 	if len(result) == 0 {
 		result = append(result, openAIChatMessage{Role: "user", Content: " "})
 	}
 	return result, nil
+}
+
+// ensureCompatibleUserMessage 保证 messages 中至少存在一条 user 消息。
+// qwen 等模型的 chat template 要求至少一条 user query，否则渲染失败，上游返回
+// "no user query found in messages"（经 new-api 中转表现为 500）。
+// 触发场景：curation/摘要等内部运行构造的消息序列可能只有 system+assistant+tool
+// （如 developer 提醒上提合并后 user 被压缩掉、或纯工具回放序列）。
+// 兜底策略：在末尾追加一条中性的 user 消息，让模板可渲染；不改变原有消息语义。
+func ensureCompatibleUserMessage(messages []openAIChatMessage) []openAIChatMessage {
+	for _, msg := range messages {
+		if msg.Role == "user" {
+			return messages
+		}
+	}
+	if len(messages) == 0 {
+		return messages
+	}
+	return append(messages, openAIChatMessage{Role: "user", Content: "Please continue."})
 }
 
 // normalizeCompatibleSystemMessages 将 system 角色收敛为开头至多一条消息：

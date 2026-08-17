@@ -86,6 +86,67 @@ func TestOpenAICompatibleConvertWithoutLeadingSystemKeepsInsertionOrder(t *testi
 	}
 }
 
+func TestOpenAICompatibleConvertAppendsUserFallbackWhenMissing(t *testing.T) {
+	provider, err := NewOpenAICompatibleProvider("test", config.ProviderConfig{
+		Type:         "openai-compatible",
+		BaseURL:      "https://example.com",
+		DefaultModel: "test-model",
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewOpenAICompatibleProvider() error = %v", err)
+	}
+
+	// 无任何 user 消息的序列（curation/摘要等内部运行可能出现），
+	// qwen chat template 会报 "no user query found in messages" 500。
+	// 期望末尾追加一条 user 兜底。
+	converted, err := provider.(*OpenAICompatibleProvider).convertMessages([]models.Message{
+		{Role: "system", Content: "curator prompt"},
+		{Role: "assistant", Content: "checking", ToolCalls: []models.ToolCall{{
+			ID: "c1", Type: "function", Function: models.ToolCallFunction{Name: "memory_read", Arguments: "{}"},
+		}}},
+		{Role: "tool", ToolCallID: "c1", Content: "result"},
+	})
+	if err != nil {
+		t.Fatalf("convertMessages() error = %v", err)
+	}
+	last := converted[len(converted)-1]
+	if last.Role != "user" || strings.TrimSpace(last.Content.(string)) == "" {
+		t.Fatalf("expected trailing user fallback, got %+v", last)
+	}
+	userCount := 0
+	for _, msg := range converted {
+		if msg.Role == "user" {
+			userCount++
+		}
+	}
+	if userCount != 1 {
+		t.Fatalf("expected exactly one user message, got %d", userCount)
+	}
+}
+
+func TestOpenAICompatibleConvertKeepsExistingUserMessages(t *testing.T) {
+	provider, err := NewOpenAICompatibleProvider("test", config.ProviderConfig{
+		Type:         "openai-compatible",
+		BaseURL:      "https://example.com",
+		DefaultModel: "test-model",
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewOpenAICompatibleProvider() error = %v", err)
+	}
+
+	converted, err := provider.(*OpenAICompatibleProvider).convertMessages([]models.Message{
+		{Role: "system", Content: "sys"},
+		{Role: "user", Content: "hello"},
+		{Role: "assistant", Content: "hi"},
+	})
+	if err != nil {
+		t.Fatalf("convertMessages() error = %v", err)
+	}
+	if len(converted) != 3 {
+		t.Fatalf("expected no extra user message, got %d: %+v", len(converted), converted)
+	}
+}
+
 func TestOpenAICompatibleChatStreamRetriesTransientStatus(t *testing.T) {
 	attempts := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -181,8 +242,9 @@ func TestOpenAICompatibleConvertMessagesIncludesReasoningContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("convertMessages() error = %v", err)
 	}
-	if len(messages) != 1 {
-		t.Fatalf("expected 1 message, got %d", len(messages))
+	// 末尾会追加 user 兜底（qwen 模板要求至少一条 user query），共 2 条。
+	if len(messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(messages))
 	}
 	if messages[0].ReasoningContent != "step by step" {
 		t.Fatalf("expected reasoning content to be preserved, got %q", messages[0].ReasoningContent)
@@ -266,8 +328,9 @@ func TestOpenAICompatibleConvertMessagesKeepsToolMessagesTextOnly(t *testing.T) 
 	if err != nil {
 		t.Fatalf("convertMessages() error = %v", err)
 	}
-	if len(converted) != 2 {
-		t.Fatalf("expected assistant and tool messages, got %d", len(converted))
+	// 末尾会追加 user 兜底（qwen 模板要求至少一条 user query），共 3 条。
+	if len(converted) != 3 {
+		t.Fatalf("expected assistant, tool and user fallback, got %d", len(converted))
 	}
 	if text, ok := converted[1].Content.(string); !ok || text != "Screenshot captured" {
 		t.Fatalf("expected text-only tool content, got %#v", converted[1].Content)

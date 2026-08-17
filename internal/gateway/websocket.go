@@ -644,6 +644,17 @@ func (g *Gateway) runWSStream(conn *websocket.Conn, connID string, wsMsg WSMessa
 			resp.Type = "error"
 			resp.Content = event.Error.Error()
 			resp.Done = true
+			// 落盘：此前 error 事件只进内存 ring buffer（AddLog），日志文件里查不到
+			// 流式失败现场（如上游 500），排障只能靠前端截图。
+			logger.Error("Stream event error forwarded to client", logger.Fields{
+				"conn_id":    connID,
+				"agent_id":   agentID,
+				"session_id": sessKey,
+				"event_type": event.Type,
+				"iteration":  event.Iteration,
+				"error":      event.Error.Error(),
+			})
+			g.AddLog("error", "Stream failed ["+agentID+"]: "+event.Error.Error())
 		}
 
 		data, _ := json.Marshal(resp)
