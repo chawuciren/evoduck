@@ -182,13 +182,22 @@ func (g *Gateway) applyConfig(cfg *config.Config) (SettingsOperationResult, erro
 		return SettingsOperationResult{}, err
 	}
 	g.setCurrentConfig(cfg)
+
+	// 热更新 LLM provider 配置到 Registry 和所有已注册 Agent
+	if err := g.llmReg.UpdateProviders(cfg.LLM); err != nil {
+		return SettingsOperationResult{}, fmt.Errorf("update LLM providers: %w", err)
+	}
+	if err := g.agentMgr.RefreshAgentProviders(); err != nil {
+		return SettingsOperationResult{}, fmt.Errorf("refresh agent providers: %w", err)
+	}
+
 	g.rebuildChannels(cfg, g.channelsStarted)
 	if err := g.registerSystemScheduledTasks(); err != nil {
 		return SettingsOperationResult{}, err
 	}
 	return SettingsOperationResult{
-		AppliedNow:      []string{"logging", "default_agent", "memory", "scheduler.system_tasks"},
-		RestartRequired: []string{"gateway", "channels", "agents", "llm.default_provider", "llm.default_model", "llm.providers", "tools", "mcp"},
+		AppliedNow:      []string{"logging", "default_agent", "memory", "scheduler.system_tasks", "llm.providers", "llm.default_provider", "llm.default_model"},
+		RestartRequired: []string{"gateway", "channels", "agents", "tools", "mcp"},
 	}, nil
 }
 

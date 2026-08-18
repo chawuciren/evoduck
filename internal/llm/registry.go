@@ -6,12 +6,14 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/chawuciren/evoduck/pkg/config"
 	"github.com/chawuciren/evoduck/pkg/proxy"
 )
 
 type Registry struct {
+	mu               sync.RWMutex
 	providerConfigs  map[string]config.ProviderConfig
 	dynamicProviders map[string]Provider
 	defaultProvider  string
@@ -36,6 +38,27 @@ func NewRegistry(cfg config.LLMConfig, decider *proxy.Decider) (*Registry, error
 	}
 
 	return r, nil
+}
+
+// UpdateProviders 热替换静态 provider 配置（保留插件注册的动态 provider）。
+// 先试创建所有新 provider 进行校验，任何一个失败则整体拒绝，旧配置不变。
+func (r *Registry) UpdateProviders(cfg config.LLMConfig) error {
+	// 校验阶段：试创建每个 provider，确保配置合法
+	newConfigs := make(map[string]config.ProviderConfig, len(cfg.Providers))
+	for name, pCfg := range cfg.Providers {
+		if _, err := r.newProvider(name, pCfg); err != nil {
+			return fmt.Errorf("validate provider %s: %w", name, err)
+		}
+		newConfigs[name] = pCfg
+	}
+
+	// 原子替换阶段
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.providerConfigs = newConfigs
+	r.defaultProvider = cfg.DefaultProvider
+	r.defaultModel = cfg.DefaultModel
+	return nil
 }
 
 func (r *Registry) newProvider(name string, pCfg config.ProviderConfig) (Provider, error) {
@@ -117,7 +140,8 @@ func (r *Registry) newProvider(name string, pCfg config.ProviderConfig) (Provide
 	}
 }
 
-func (r *Registry) Get(name string) (Provider, error) {
+// getProvider 内部无锁读取（调用方需持有至少 RLock）
+func (r *Registry) getProvider(name string) (Provider, error) {
 	if provider, ok := r.dynamicProviders[name]; ok {
 		return provider, nil
 	}
@@ -128,7 +152,16 @@ func (r *Registry) Get(name string) (Provider, error) {
 	return r.newProvider(name, pCfg)
 }
 
+// Get 按名称获取 provider 实例（线程安全）
+func (r *Registry) Get(name string) (Provider, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.getProvider(name)
+}
+
 func (r *Registry) RegisterDynamic(name string, provider Provider) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if name == "" {
 		return fmt.Errorf("dynamic provider name cannot be empty")
 	}
@@ -146,21 +179,29 @@ func (r *Registry) RegisterDynamic(name string, provider Provider) error {
 }
 
 func (r *Registry) Default() (Provider, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	if r.defaultProvider == "" {
 		return nil, fmt.Errorf("no default provider configured")
 	}
-	return r.Get(r.defaultProvider)
+	return r.getProvider(r.defaultProvider)
 }
 
 func (r *Registry) DefaultProviderName() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return r.defaultProvider
 }
 
 func (r *Registry) DefaultModelName() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return r.defaultModel
 }
 
 func (r *Registry) ListProviderNames() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	names := make([]string, 0, len(r.providerConfigs)+len(r.dynamicProviders))
 	for name := range r.providerConfigs {
 		names = append(names, name)
@@ -175,7 +216,9 @@ func (r *Registry) ListProviderNames() []string {
 }
 
 func (r *Registry) ListModels(ctx context.Context, providerName string) ([]ProviderModel, error) {
-	provider, err := r.Get(providerName)
+	r.mu.RLock()
+	provider, err := r.getProvider(providerName)
+	r.mu.RUnlock()
 	if err != nil {
 		return nil, err
 	}
@@ -194,6 +237,8 @@ func ListModelsForProviderConfig(ctx context.Context, providerName string, provi
 }
 
 func (r *Registry) ResolveProviderModel(providerName, model string) (string, string, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	resolvedProvider := providerName
 	if resolvedProvider == "" {
 		resolvedProvider = r.defaultProvider
